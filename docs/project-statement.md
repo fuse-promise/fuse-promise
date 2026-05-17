@@ -1,75 +1,88 @@
 # Project Statement
 
-## About
+## Summary
 
 `fuse-promise` is a Linux user-space filesystem component for promised files.
 
-It allows a provider process to publish a filesystem tree before the file contents are present locally. The tree is visible through ordinary filesystem paths. Metadata is available immediately. File contents are supplied later, on demand, when a process reads the file. A promised file or directory can also be materialized into real local storage through a standard operation.
+It lets a provider publish a filesystem tree from metadata first, expose that tree through ordinary paths, supply file contents only when the file is read, and materialize promised nodes into real local storage when requested.
 
-The project is built on the existing Linux FUSE interface. The kernel FUSE driver remains the kernel boundary. `fuse-promise` implements the filesystem daemon, runtime, public library, provider model, and materialization semantics in user space.
+## Project Identity
 
-## Position
+`fuse-promise` is infrastructure.
 
-`fuse-promise` is a system component, not an end-user application.
+It is intended to behave like a Linux ecosystem component: small public surface, stable ABI discipline, conservative runtime behavior, clear security boundaries, and implementation details hidden behind installed headers and shared libraries.
 
-It belongs in the same broad layer as other Linux user-space filesystem and desktop/runtime infrastructure: small public interfaces, a long-running runtime process when needed, conservative behavior, and clear boundaries between public ABI and private implementation.
+It is not an application framework and not a product-specific sync client.
 
-The repository provides:
+## System Layer
 
-- A Promise filesystem model.
-- A user-session daemon.
-- A FUSE-backed runtime.
-- A stable C ABI.
-- A public header and shared library.
-- A materialize operation.
-- Administrative tools and tests.
+The project sits above the Linux FUSE kernel interface and below application-specific systems.
 
-The repository does not provide:
+```text
+Applications and providers
+  use normal filesystem APIs or libfusepromise.so
 
-- Clipboard synchronization.
-- Cloud storage integrations.
-- P2P transport.
-- Desktop drag-and-drop adapters.
-- Application-specific remote file protocols.
+fuse-promise
+  public C ABI
+  user-session daemon
+  Promise runtime
+  FUSE adapter
 
-Those features are valid users of `fuse-promise`, but they are not part of this repository.
+Linux
+  VFS
+  fuse.ko
+  /dev/fuse
+```
 
-## Rationale
+The kernel is not modified. Promise behavior is implemented by the user-space daemon.
 
-Linux already has a strong kernel/userspace separation for filesystems through FUSE. The kernel provides the VFS integration and `/dev/fuse` communication path. A userspace daemon provides filesystem data and metadata. This is the correct layer for a Promise filesystem because the behavior is policy-heavy, provider-specific, and session-scoped.
+## Core Idea
 
-Promised files should not require kernel patches. They should not require every application to implement a new protocol. They should appear as normal filesystem paths while exposing a small system API for producers that can supply content lazily.
+A Promise tree separates file existence from file availability.
 
-## Design Goals
+The runtime can expose:
 
-- Use the existing Linux FUSE model.
+- File names.
+- Directory structure.
+- File sizes.
+- Modes.
+- Timestamps.
+- Provider-owned node identifiers.
+
+without requiring local file content to exist yet.
+
+When an ordinary process reads a promised file, the runtime asks the owning provider for the requested byte range. When a caller needs a real local copy, the runtime materializes the promised node by reading the provider stream and writing normal files.
+
+## Goals
+
+- Provide a generic promised-file layer for Linux.
+- Use the existing FUSE model instead of kernel patches.
 - Run by default as the current user.
 - Mount by default under `$XDG_RUNTIME_DIR/fuse-promise/`.
 - Expose ordinary filesystem paths to consumers.
-- Expose a stable C ABI to providers.
-- Keep daemon IPC private and replaceable.
-- Make metadata publication cheap.
-- Fetch bytes only when read.
-- Support offset-based reads.
+- Expose a versioned C ABI to providers.
+- Keep daemon IPC private.
+- Support metadata-only tree creation.
+- Support offset-based lazy reads.
 - Support recursive materialization.
-- Keep the first stable model read-only.
-- Keep integration-specific code out of the core tree.
+- Keep the first stable filesystem model read-only.
 
 ## Non-Goals
 
-- No Linux kernel changes.
-- No kernel module.
+- No Linux kernel module.
+- No kernel changes.
 - No clipboard product in this repository.
 - No desktop-environment plugin in this repository.
 - No cloud-provider implementation in this repository.
+- No P2P transport implementation in this repository.
 - No public daemon wire protocol.
-- No language-specific SDK as the primary ABI.
+- No Rust ABI as the public interface.
 
-Language bindings may exist later, but they must bind to the C ABI.
+Upper-layer software may implement clipboard, cloud, P2P, or desktop behavior by using the public ABI.
 
-## Public Interface Policy
+## Public Interface
 
-The public interface is:
+The stable public contract is:
 
 ```text
 fuse-promise/fuse-promise.h
@@ -77,29 +90,19 @@ libfusepromise.so
 fuse-promise.pc
 ```
 
-The public C ABI must be versioned and conservative. Public structs should be extensible. Public symbols should use the `fp_` prefix. Public handles should be opaque.
+Public symbols should use the `fp_` prefix. Public handles should be opaque. Public structs should be versionable or size-tagged where future extension is expected.
 
-The private interface is everything between `libfusepromise.so` and `fuse-promised`. It may use Unix domain sockets, D-Bus, shared memory, or another local transport. Applications must not depend on that transport.
+Everything between `libfusepromise.so` and `fuse-promised` is private implementation detail.
 
-## Language and ABI Policy
+## Language Policy
 
 The preferred implementation language is Rust.
 
-Rust is an implementation detail used for the runtime, daemon, metadata model, provider session management, cache, materialize engine, IPC implementation, and FUSE adapter code.
+Rust may be used for the daemon, runtime, metadata model, provider session management, materialize engine, cache, private IPC, FUSE adapter, and tools.
 
-Rust is not the public ABI. Public consumers must not depend on Rust crates, Rust traits, Rust generics, Rust ownership types, async futures, Tokio handles, or any other Rust-specific interface.
+Rust must not be the public ABI. Public consumers must not depend on Rust crates, traits, generics, async futures, Tokio handles, or Rust ownership types.
 
-The stable external contract is the C ABI:
-
-```text
-include/fuse-promise/fuse-promise.h
-libfusepromise.so
-fuse-promise.pc
-```
-
-This keeps `fuse-promise` usable from C, C++, Go, Python, Qt, GTK, desktop services, command-line tools, and other Linux ecosystem software without binding them to Rust ABI stability.
-
-## Filesystem Semantics
+## Filesystem Behavior
 
 A committed Promise tree should behave like a normal read-only filesystem tree unless documented otherwise.
 
@@ -108,57 +111,64 @@ Expected behavior:
 - `stat` returns declared metadata.
 - `readdir` returns declared children.
 - `open` validates the node and provider state.
-- `read` asks the provider for the requested byte range.
-- `cp` and similar tools naturally materialize content by reading it.
-- Explicit materialization writes a real local copy and records materialized state.
+- `read` requests bytes from the provider by node, offset, and length.
+- `cp`, `tar`, `rsync`, and similar tools work by reading files normally.
+- Explicit materialization writes real files and records materialized state.
 
-Errors from provider or runtime failures should map to deterministic `errno` values for filesystem callers and to `fp_status_t` values for public API callers.
+Runtime failures should map to deterministic `errno` values for filesystem callers and to `fp_status_t` values for public API callers.
 
-## Security Model
+## Security Position
 
 The default runtime is user-session scoped.
 
-The mount owner is the current user. The daemon runs with the privileges of that user. The default mount must not expose promised content to other users. Any future support for broader visibility must be explicit and must account for FUSE permission behavior.
+The daemon runs as the current user and owns the session mount. The default mount must not expose promised content to other users. Any broader visibility must be explicit.
 
 The runtime must validate:
 
 - Provider ownership.
 - Node identity.
+- Paths and path traversal.
 - Read ranges.
 - Message sizes.
-- Target paths for materialization.
+- Materialize target paths.
 - Provider disconnects.
 
 ## Implementation Character
 
-The codebase should look and behave like a Linux infrastructure component:
+The codebase should be plain, inspectable, and distribution-friendly.
 
-- Small public surface.
-- Plain errors.
+Prefer:
+
+- Small APIs.
+- Typed errors.
 - Explicit ownership.
-- No hidden application policy in the core.
-- No required network stack.
-- No required desktop stack.
-- No dependency on a single provider protocol.
-- Source layout that separates public headers, daemon code, runtime code, FUSE adapter code, tools, and tests.
+- Stable install paths.
+- Boring command-line tools.
+- Clear separation between public ABI and private runtime.
 
-The project should prefer boring interfaces that distributions can package and downstream projects can rely on.
+Avoid:
 
-## Status
+- Hidden application policy.
+- Required desktop dependencies.
+- Required network dependencies.
+- Provider-specific logic in core.
+- Integration directories inside the core repository.
 
-The project is currently in the design and specification phase.
+## Initial Target
 
-The first implementation target is a read-only Promise filesystem MVP with:
+The first implementation should prove the minimum system behavior:
 
-- Static promised tree commit.
-- `getattr`, `readdir`, `open`, and `read`.
-- Provider read callbacks.
-- A user-session daemon.
-- A minimal administrative CLI.
-- File and directory materialization.
+- Start a user-session daemon.
+- Mount `$XDG_RUNTIME_DIR/fuse-promise/`.
+- Commit a static Promise tree.
+- Serve `getattr`, `readdir`, `open`, and `read`.
+- Route reads to provider callbacks.
+- Materialize a file and a directory tree.
+- Expose a small `fpctl` utility for inspection and testing.
 
 ## References
 
 - Linux kernel FUSE documentation: https://www.kernel.org/doc/html/latest/filesystems/fuse/
 - libfuse project: https://github.com/libfuse/libfuse
 - libfuse API documentation: https://libfuse.github.io/doxygen/
+
