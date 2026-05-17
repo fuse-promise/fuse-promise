@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fuse-promise-runtime",
+    "crates/fuse-promise-ffi",
+    "crates/fuse-promise-daemon",
+    "tools/fpctl",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+authors = ["fuse-promise contributors"]

@@ -1,0 +1,14 @@
+[package]
+name = "fpctl"
+description = "Administrative CLI for fuse-promise"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "fpctl"
+path = "src/main.rs"
+
+[dependencies]
+fuse-promise-runtime = { path = "../../crates/fuse-promise-runtime" }

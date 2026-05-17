@@ -1,0 +1,10 @@
+prefix=@prefix@
+exec_prefix=${prefix}
+includedir=${prefix}/include
+libdir=${exec_prefix}/lib
+
+Name: fuse-promise
+Description: Linux user-space Promise filesystem runtime
+Version: @version@
+Cflags: -I${includedir}
+Libs: -L${libdir} -lfusepromise

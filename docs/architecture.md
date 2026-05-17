@@ -12,10 +12,11 @@ Public fuse-promise ABI
   fuse-promise/fuse-promise.h
   libfusepromise.so
 
-Private runtime
+Private runtime owned by fuse-promised
   provider sessions
-  daemon IPC
+  private daemon IPC
   metadata store
+  inode map
   cache
   materialize engine
 
@@ -76,7 +77,13 @@ Responsibilities:
 - Hide private daemon communication.
 - Translate runtime errors into public error codes.
 
+The library must not be the authoritative Promise namespace. It may hold client
+handles and pending builder state, but committed Promise trees, provider
+session state, inode allocation, and mount state belong to `fuse-promised`.
+
 The transport between the library and daemon is private implementation detail.
+Before that transport exists, public functions that would require a visible
+FUSE path must return `FP_ERR_UNAVAILABLE` instead of fabricating paths.
 
 ### User-Session Daemon
 
@@ -116,12 +123,20 @@ The core runtime owns provider-independent behavior:
 - Promise tree model.
 - Node metadata validation.
 - Path normalization.
+- Runtime node identifiers.
 - Inode mapping.
+- Parent-child directory indexes.
 - Provider ownership.
+- Promise lifecycle state.
 - Read request planning.
 - Error mapping.
 - Lifecycle state.
 - Materialization state.
+
+The runtime crate may be used in unit tests and daemon internals, but the
+deployed system has one authoritative runtime instance per user-session daemon.
+Per-client in-process runtime state is only acceptable for temporary builder
+validation and tests.
 
 ### Materialize Engine
 
@@ -180,6 +195,132 @@ The provider uses `libfusepromise.so` to:
 
 This mirrors the general platform pattern used by file promise systems: the producer declares file metadata first and supplies data later when the consumer actually requests it.
 
+## Runtime Ownership Model
+
+`fuse-promised` owns all state that is visible through the mounted filesystem.
+
+```text
+provider application
+  -> libfusepromise.so
+  -> private IPC client
+
+fuse-promised
+  -> provider session table
+  -> Promise metadata store
+  -> inode and directory indexes
+  -> FUSE adapter
+```
+
+The daemon is the only process that may allocate visible promise identifiers,
+runtime node identifiers, and inode numbers. This avoids split-brain behavior
+where one client believes a Promise tree was committed but the mounted
+filesystem cannot see it.
+
+Client-side library state is limited to:
+
+- Opaque public handles.
+- Provider callback pointers and user data.
+- Builder state before commit.
+- Private IPC connection state.
+- Temporary buffers for provider callbacks.
+
+## Provider Session Model
+
+A provider session is live while its public library connection remains alive.
+The daemon tracks each provider session by an internal provider id and state:
+
+```text
+live -> disconnected
+```
+
+Promises owned by a disconnected provider remain visible only according to
+runtime policy:
+
+- If fully materialized, reads may use the materialized path.
+- If fully cached, reads may use cache policy.
+- Otherwise, reads and materialize operations fail deterministically.
+
+Provider callback pointers are public ABI concepts inside the provider process,
+but the callback transport between daemon and provider is private. A future
+implementation may use a library-managed helper thread, a Unix socket, shared
+memory, eventfd, or another daemon-controlled mechanism. Applications must not
+depend on that mechanism.
+
+## Metadata and Inode Model
+
+Each committed tree is a snapshot unless declared otherwise by a future
+capability. The daemon stores nodes with:
+
+- Runtime node id.
+- Stable inode number for FUSE.
+- Provider-owned opaque node id.
+- Normalized relative path.
+- Parent id or parent path.
+- Child index for directories.
+- Node kind.
+- Size, permission bits, and timestamps.
+- Lifecycle state such as available, provider-gone, cached, or materialized.
+
+The public `mode` field represents permission bits, not the full Linux
+`st_mode` file type. The FUSE adapter combines node kind and permission bits
+when answering `getattr`.
+
+The initial public ABI accepts UTF-8 path strings. If the project requires full
+Linux byte-string path coverage before ABI freeze, a byte-path API should be
+added before the first stable release.
+
+## Commit Flow
+
+Commit is the boundary where builder state becomes visible filesystem state.
+
+```text
+fp_promise_commit()
+  -> libfusepromise.so validates public handles and builder state
+  -> private IPC commit request
+  -> fuse-promised validates provider ownership and paths
+  -> daemon allocates promise id, node ids, and inodes
+  -> daemon updates metadata store
+  -> daemon returns visible path under the mounted namespace
+```
+
+If the daemon is unavailable, the FUSE mount is not ready, or the IPC transport
+has not been implemented, commit must return `FP_ERR_UNAVAILABLE`.
+
+## Read Flow
+
+```text
+application read(2)
+  -> Linux VFS
+  -> FUSE kernel interface
+  -> fuse-promised read callback
+  -> runtime resolves inode to Promise node
+  -> runtime resolves provider session
+  -> daemon asks provider process for offset and length
+  -> provider writes into runtime-owned buffer
+  -> daemon returns bytes to FUSE
+```
+
+Read requests are offset-based. A read past end-of-file returns zero bytes. A
+short provider response is allowed and follows normal filesystem semantics.
+
+## Materialize Flow
+
+Materialize uses the same provider read path as ordinary filesystem reads:
+
+```text
+fp_materialize()
+  -> libfusepromise.so
+  -> private IPC materialize request
+  -> fuse-promised validates target, policy, and provider state
+  -> runtime walks the Promise subtree
+  -> runtime reads chunks through the provider read path
+  -> runtime writes normal files and applies metadata
+  -> runtime records materialized state
+```
+
+This keeps materialize behavior aligned with lazy read behavior and avoids a
+second provider protocol.
+
 ## Mount Model
 
 Default mount path:
@@ -210,6 +351,19 @@ Acceptable implementations include:
 - A future custom transport.
 
 Applications must not depend on this channel directly. They must link the shared library.
+
+Minimum private IPC capabilities:
+
+- Connect to or start the user-session daemon.
+- Register and unregister provider sessions.
+- Commit Promise tree metadata.
+- Route provider read requests and responses.
+- Query daemon status for `fpctl`.
+- Request materialization and cancellation.
+- Propagate provider disconnects.
+
+IPC messages must validate size, version, provider ownership, path bounds, read
+ranges, and target paths before mutating daemon state.
 
 ## Failure Model
 

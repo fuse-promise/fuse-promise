@@ -77,7 +77,7 @@ typedef struct fp_promise_builder fp_promise_builder_t;
 Public errors use explicit status values:
 
 ```c
-typedef enum fp_status fp_status_t;
+typedef uint32_t fp_status_t;
 ```
 
 Extensible public structs should include a `struct_size` field.
@@ -132,4 +132,3 @@ Async must not appear in the public C ABI. Provider callbacks exposed through th
 Language bindings may be added later.
 
 All official bindings should bind to the C ABI instead of depending on private Rust internals. This keeps the ABI surface small and keeps the implementation free to evolve.
-

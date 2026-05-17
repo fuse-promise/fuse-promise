@@ -37,27 +37,24 @@ FFI-facing code must use opaque handles, `#[repr(C)]` structs where needed, stab
 
 ## Source Tree Shape
 
-The future implementation should use a layout close to:
+The implementation should use a layout close to:
 
 ```text
 include/
   fuse-promise/
     fuse-promise.h
 
-src/
-  lib/
-  daemon/
-  runtime/
-  fuse/
-  materialize/
-  cache/
-  ipc/
+crates/
+  fuse-promise-runtime/
+  fuse-promise-ffi/
+  fuse-promise-daemon/
 
 tools/
   fpctl/
 
+pkgconfig/
+systemd/
 tests/
-  unit/
   integration/
 
 docs/
@@ -73,7 +70,9 @@ Rules:
 
 - Use `fp_` for public symbols.
 - Use opaque handle types for runtime objects.
-- Use fixed-width integer types for ABI-visible sizes and ids.
+- Use fixed-width integer types for ABI-visible status and policy values.
+- Use native `size_t` only where the ABI is intentionally native-platform
+  scoped, such as in-process buffer lengths.
 - Include `struct_size` in extensible public structs.
 - Avoid exposing implementation language details.
 - Avoid exposing daemon IPC structures.
@@ -146,6 +145,8 @@ Important test areas:
 - Offset reads.
 - Short reads.
 - Provider disconnect.
+- Header/Rust ABI layout consistency.
+- Provider callback buffer bounds.
 - Materialize success.
 - Materialize partial failure.
 - Path normalization.

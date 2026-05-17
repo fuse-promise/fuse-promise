@@ -7,9 +7,19 @@
 - Define the initial public C ABI.
 - Define daemon lifecycle.
 - Define read and materialize semantics.
+- Add initial source layout, public header, Rust runtime skeleton, C ABI entry
+  points, daemon entry point, and `fpctl status`.
+- Keep pkg-config and systemd files as placeholders until an install/build
+  system generates and installs them.
 
 ## Phase 1: Read-Only MVP
 
+- Make `fuse-promised` the sole owner of runtime metadata, provider sessions,
+  inode allocation, and mount state.
+- Add private library-to-daemon IPC.
+- Make `libfusepromise.so` connect to or start the daemon instead of owning an
+  independent in-process runtime.
+- Make `fpctl` query the daemon through the same private runtime path.
 - Implement the user-session daemon.
 - Mount a FUSE filesystem under `$XDG_RUNTIME_DIR/fuse-promise/`.
 - Support static Promise trees.
@@ -28,8 +38,9 @@
 ## Phase 3: ABI Hardening
 
 - Freeze `fuse-promise.h` for a first unstable developer release.
-- Add ABI version checks.
-- Add pkg-config metadata.
+- Add ABI layout tests for header/Rust constants, struct sizes, alignment, and
+  field offsets.
+- Add pkg-config generation and install metadata.
 - Add public error documentation.
 - Add C examples that use only the public API.
 
@@ -58,4 +69,3 @@ The following should be built as separate projects or downstream users:
 - Cloud storage providers.
 - P2P file transfer products.
 - Desktop-environment-specific plugins.
-

@@ -8,7 +8,14 @@ The project is a system component. It is not a clipboard application, a cloud cl
 
 ## Status
 
-This repository is in the design and specification phase.
+This repository is in the early implementation phase.
+
+The current tree contains the public C header, Rust workspace skeleton, core
+Promise metadata model, C ABI entry points, and initial daemon and CLI entry
+points. The FUSE adapter, private daemon IPC, provider read routing, and
+materialize engine are still under development. The public commit and
+materialize calls currently return `FP_ERR_UNAVAILABLE` rather than claiming a
+visible FUSE path that does not exist yet.
 
 The first implementation target is a read-only Promise filesystem MVP:
 
@@ -16,7 +23,9 @@ The first implementation target is a read-only Promise filesystem MVP:
 - Expose them under a user-session FUSE mount.
 - Support `stat`, `readdir`, `open`, and offset-based `read`.
 - Route reads to provider callbacks.
-- Materialize promised files and directories into real local paths.
+
+Materialization is the next phase after the read-only filesystem path is
+working end to end.
 
 ## Why
 
@@ -114,6 +123,18 @@ Those projects should live outside this repository and use the public API.
 - [Development Style](docs/development-style.md)
 - [Roadmap](docs/roadmap.md)
 
+## Source Layout
+
+```text
+include/fuse-promise/fuse-promise.h  public C ABI
+crates/fuse-promise-runtime/         core Promise metadata model
+crates/fuse-promise-ffi/             libfusepromise C ABI implementation
+crates/fuse-promise-daemon/          fuse-promised daemon entry point
+tools/fpctl/                         administrative CLI
+pkgconfig/fuse-promise.pc.in         pkg-config template
+systemd/user/fuse-promised.service   placeholder user service template
+```
+
 ## Repository Description
 
 Suggested short description for GitHub:
@@ -121,4 +142,3 @@ Suggested short description for GitHub:
 ```text
 Linux user-space Promise filesystem runtime built on FUSE, with lazy reads and materialize support.
 ```
-

@@ -1,0 +1,15 @@
+[package]
+name = "fuse-promise-ffi"
+description = "C ABI surface for fuse-promise"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[lib]
+name = "fusepromise"
+path = "src/lib.rs"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+fuse-promise-runtime = { path = "../fuse-promise-runtime" }

@@ -16,7 +16,9 @@ Linux FUSE
   kernel interface
 ```
 
-The public library may start or connect to the daemon according to implementation policy.
+The public library may start or connect to the daemon according to
+implementation policy. The daemon owns the authoritative runtime state; client
+processes must not commit Promise trees into a private in-process namespace.
 
 ## Daemon Name
 
@@ -52,11 +54,17 @@ Typical resolved path:
 
 The runtime should avoid a global shared default mount because Promise ownership and provider callbacks are user-session scoped.
 
+`XDG_RUNTIME_DIR` must be present and absolute. The daemon should create the
+`fuse-promise` child directory with user-session scoped permissions and fail
+explicitly if the runtime directory is unsafe or unavailable.
+
 ## Daemon Responsibilities
 
 - Mount and unmount the FUSE filesystem.
 - Keep the Promise metadata index.
 - Allocate runtime inode ids.
+- Allocate visible promise ids and runtime node ids.
+- Maintain parent-child indexes for directory enumeration.
 - Route read requests to the correct provider.
 - Detect provider disconnects.
 - Enforce access and ownership rules.
@@ -72,6 +80,26 @@ The provider session is live only while the application process and library conn
 
 The daemon must invalidate or mark unavailable all non-materialized promises owned by a disconnected provider, unless a configured cache mode can satisfy reads without the provider.
 
+Provider state should be explicit:
+
+```text
+live
+disconnected
+```
+
+Promise state should also be explicit:
+
+```text
+available
+provider-gone
+cached
+materialized
+destroyed
+```
+
+The first implementation may omit cache and destroyed states internally, but
+the state machine should leave room for them.
+
 ## Internal Communication
 
 The internal communication channel is intentionally private.
@@ -85,6 +113,14 @@ Implementation may use:
 
 The public contract is the C ABI. Applications must not talk to the daemon protocol directly.
 
+Minimum IPC operations:
+
+- Runtime status.
+- Provider register and unregister.
+- Promise commit.
+- Provider read request and response.
+- Materialize start, progress, cancellation, and result.
+
 ## Lifecycle
 
 Recommended lifecycle:
@@ -96,6 +132,9 @@ Recommended lifecycle:
 5. Filesystem users access promised paths.
 6. Reads are routed to providers or materialized paths.
 7. On session exit, daemon unmounts and clears session-scoped state.
+
+Until daemon IPC and the FUSE mount exist, public commit and materialize calls
+should return `FP_ERR_UNAVAILABLE`.
 
 ## Materialize Runtime Flow
 
@@ -139,4 +178,3 @@ The runtime should eventually expose:
 - Cache usage.
 
 Observability should be available through `fpctl` and structured logs.
-

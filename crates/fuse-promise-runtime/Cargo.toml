@@ -1,0 +1,11 @@
+[package]
+name = "fuse-promise-runtime"
+description = "Core Promise filesystem metadata model for fuse-promise"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[lib]
+name = "fuse_promise_runtime"
+path = "src/lib.rs"
