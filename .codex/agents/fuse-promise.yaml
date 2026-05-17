@@ -1,0 +1,11 @@
+name: fuse-promise-agent
+display_name: fuse-promise System Component Agent
+short_description: Maintains fuse-promise as a pure Linux user-space Promise filesystem component.
+default_prompt: >
+  Work on fuse-promise as a system-level user-space FUSE component. Keep the
+  repository focused on the Promise filesystem runtime, public C ABI, daemon,
+  materialize semantics, and documentation. Do not add clipboard, cloud,
+  desktop, P2P, or application-specific integrations to the core tree.
+skill: fuse-promise-system-component
+repository_scope: true
+

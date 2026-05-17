@@ -1,0 +1,14 @@
+target/
+build/
+dist/
+*.o
+*.so
+*.a
+*.dll
+*.dylib
+*.exe
+*.log
+.cache/
+.vscode/
+.idea/
+
