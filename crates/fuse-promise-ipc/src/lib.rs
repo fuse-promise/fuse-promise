@@ -34,13 +34,25 @@ pub struct DaemonStatus {
 
 impl DaemonStatus {
     pub fn from_runtime(runtime: &Runtime) -> Result<Self, Status> {
+        Self::from_runtime_with_mount(runtime, IpcMountStatus::not_mounted())
+    }
+
+    pub fn from_runtime_with_mount(
+        runtime: &Runtime,
+        mount_status: IpcMountStatus,
+    ) -> Result<Self, Status> {
+        let mount_path = mount_status
+            .mount_path
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(default_mount_path)?;
         Ok(Self {
             api_version: API_VERSION,
-            mount_path: default_mount_path()?,
+            mount_path,
             socket_path: default_control_socket_path()?,
             daemon: "connected",
-            mount: "not-mounted",
-            fuse_adapter: "not-implemented",
+            mount: mount_status.mount,
+            fuse_adapter: mount_status.fuse_adapter,
             providers: runtime.provider_count(),
             promises: runtime.promise_count(),
         })
@@ -48,6 +60,54 @@ impl DaemonStatus {
 
     pub fn encode(&self) -> String {
         StatusBody::from_status(self).encode_text()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IpcMountStatus {
+    pub mount: &'static str,
+    pub fuse_adapter: &'static str,
+    mount_path: Option<PathBuf>,
+    ready_for_commits: bool,
+}
+
+impl IpcMountStatus {
+    pub fn not_mounted() -> Self {
+        Self {
+            mount: "not-mounted",
+            fuse_adapter: "not-implemented",
+            mount_path: None,
+            ready_for_commits: false,
+        }
+    }
+
+    pub fn disabled(mount_path: PathBuf) -> Self {
+        Self {
+            mount: "not-mounted",
+            fuse_adapter: "disabled",
+            mount_path: Some(mount_path),
+            ready_for_commits: false,
+        }
+    }
+
+    pub fn mounted(mount_path: PathBuf) -> Self {
+        Self {
+            mount: "mounted",
+            fuse_adapter: "enabled",
+            mount_path: Some(mount_path),
+            ready_for_commits: true,
+        }
+    }
+
+    fn visible_promise_path(&self, promise_id: &str) -> Result<PathBuf, Status> {
+        if !self.ready_for_commits {
+            return Err(Status::Unavailable);
+        }
+
+        self.mount_path
+            .as_ref()
+            .map(|mount_path| mount_path.join(promise_id))
+            .ok_or(Status::Unavailable)
     }
 }
 
@@ -119,6 +179,7 @@ enum PromiseNodeKindBody {
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
 struct PromiseCommittedBody {
     promise_id: String,
+    visible_path: String,
 }
 
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
@@ -190,6 +251,7 @@ struct ErrorBody {
 enum ErrorCode {
     InvalidRequest,
     VersionMismatch,
+    Unavailable,
     NotFound,
     ProviderGone,
     Permission,
@@ -286,6 +348,7 @@ pub struct PromiseNodeAttr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromiseCommitResponse {
     pub promise_id: String,
+    pub visible_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -309,6 +372,7 @@ pub struct ProviderReadResponse {
 #[derive(Clone)]
 pub struct IpcState {
     runtime: Arc<Mutex<Runtime>>,
+    mount_status: Arc<Mutex<IpcMountStatus>>,
     provider_routes: Arc<Mutex<std::collections::BTreeMap<u64, ProviderRoute>>>,
     pending_reads: Arc<Mutex<std::collections::BTreeMap<u64, PendingRead>>>,
 }
@@ -328,6 +392,7 @@ impl IpcState {
     pub fn new(runtime: Arc<Mutex<Runtime>>) -> Self {
         Self {
             runtime,
+            mount_status: Arc::new(Mutex::new(IpcMountStatus::not_mounted())),
             provider_routes: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
             pending_reads: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
         }
@@ -335,6 +400,21 @@ impl IpcState {
 
     pub fn runtime(&self) -> Arc<Mutex<Runtime>> {
         Arc::clone(&self.runtime)
+    }
+
+    pub fn set_mount_status(&self, mount_status: IpcMountStatus) -> io::Result<()> {
+        *self
+            .mount_status
+            .lock()
+            .map_err(|_| io::Error::other("mount status lock poisoned"))? = mount_status;
+        Ok(())
+    }
+
+    fn mount_status(&self) -> io::Result<IpcMountStatus> {
+        self.mount_status
+            .lock()
+            .map_err(|_| io::Error::other("mount status lock poisoned"))
+            .map(|status| status.clone())
     }
 
     pub fn route_provider_read(
@@ -576,6 +656,7 @@ pub fn commit_promise(
     match read_response(&mut stream)? {
         Response::PromiseCommitted(response) => Ok(PromiseCommitResponse {
             promise_id: response.promise_id,
+            visible_path: PathBuf::from(response.visible_path),
         }),
         Response::Error(error) => Err(error_to_io(error)),
         _ => Err(invalid_data(
@@ -747,11 +828,13 @@ fn handle_client_requests(
                 }
             }
             Request::Status if negotiated => {
+                let mount_status = state.mount_status()?;
                 let runtime = state
                     .runtime
                     .lock()
                     .map_err(|_| io::Error::other("runtime lock poisoned"))?;
-                let status = DaemonStatus::from_runtime(&runtime).map_err(status_to_io)?;
+                let status = DaemonStatus::from_runtime_with_mount(&runtime, mount_status)
+                    .map_err(status_to_io)?;
                 write_frame(stream, &Response::Status(StatusBody::from_status(&status)))?;
             }
             Request::Status => {
@@ -817,7 +900,7 @@ fn handle_client_requests(
                 )?;
             }
             Request::PromiseCommit(request) if negotiated => {
-                handle_promise_commit(stream, &state.runtime, request)?;
+                handle_promise_commit(stream, state, request)?;
             }
             Request::PromiseCommit(_) => {
                 write_error(
@@ -859,7 +942,7 @@ fn disconnect_registered_providers(
 
 fn handle_promise_commit(
     stream: &mut UnixStream,
-    runtime: &Arc<Mutex<Runtime>>,
+    state: &IpcState,
     request: PromiseCommitBody,
 ) -> io::Result<()> {
     let Some(provider_id) = fuse_promise_runtime::ProviderId::from_raw(request.provider_id) else {
@@ -870,6 +953,12 @@ fn handle_promise_commit(
         )?;
         return Ok(());
     };
+
+    let mount_status = state.mount_status()?;
+    if !mount_status.ready_for_commits {
+        write_status_error(stream, Status::Unavailable)?;
+        return Ok(());
+    }
 
     let mut builder = PromiseBuilder::new(provider_id);
     for node in request.nodes {
@@ -890,7 +979,8 @@ fn handle_promise_commit(
     }
 
     let tree = {
-        let mut runtime = runtime
+        let mut runtime = state
+            .runtime
             .lock()
             .map_err(|_| io::Error::other("runtime lock poisoned"))?;
         match runtime.commit_promise(builder) {
@@ -901,11 +991,15 @@ fn handle_promise_commit(
             }
         }
     };
+    let visible_path = mount_status
+        .visible_promise_path(&tree.promise_id)
+        .map_err(status_to_io)?;
 
     write_frame(
         stream,
         &Response::PromiseCommitted(PromiseCommittedBody {
             promise_id: tree.promise_id,
+            visible_path: visible_path.to_string_lossy().into_owned(),
         }),
     )
 }
@@ -1033,7 +1127,9 @@ fn remove_stale_socket(socket_path: &Path) -> io::Result<()> {
 fn error_to_io(error: ErrorBody) -> io::Error {
     let kind = match error.code {
         ErrorCode::InvalidRequest | ErrorCode::VersionMismatch => io::ErrorKind::InvalidData,
-        ErrorCode::NotFound | ErrorCode::ProviderGone => io::ErrorKind::NotFound,
+        ErrorCode::Unavailable | ErrorCode::NotFound | ErrorCode::ProviderGone => {
+            io::ErrorKind::NotFound
+        }
         ErrorCode::Permission => io::ErrorKind::PermissionDenied,
         ErrorCode::Internal => io::ErrorKind::Other,
     };
@@ -1044,6 +1140,7 @@ fn error_to_io(error: ErrorBody) -> io::Error {
 fn status_to_error_code(status: Status) -> ErrorCode {
     match status {
         Status::InvalidArgument => ErrorCode::InvalidRequest,
+        Status::Unavailable => ErrorCode::Unavailable,
         Status::Permission => ErrorCode::Permission,
         Status::NotFound => ErrorCode::NotFound,
         Status::ProviderGone => ErrorCode::ProviderGone,
@@ -1363,6 +1460,35 @@ mod tests {
     }
 
     #[test]
+    fn status_uses_shared_mount_state() {
+        let runtime_dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        std::env::set_var("XDG_RUNTIME_DIR", runtime_dir.path());
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let state = IpcState::new(Arc::new(Mutex::new(Runtime::new())));
+        state
+            .set_mount_status(IpcMountStatus::mounted(PathBuf::from("/tmp/fuse-promise")))
+            .unwrap();
+        let server_state = state.clone();
+        let server_thread = thread::spawn(move || handle_client_with_state(server, &server_state));
+
+        send_hello(&mut client);
+        write_frame(&mut client, &Request::Status).unwrap();
+        let response: Response = read_frame(&mut client).unwrap().unwrap();
+
+        match response {
+            Response::Status(status) => {
+                assert_eq!(status.mount, "mounted");
+                assert_eq!(status.fuse_adapter, "enabled");
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
+    }
+
+    #[test]
     fn server_rejects_bad_hello_version() {
         let (mut client, server) = UnixStream::pair().unwrap();
         let runtime = Arc::new(Mutex::new(Runtime::new()));
@@ -1475,8 +1601,8 @@ mod tests {
     fn promise_commit_mutates_runtime() {
         let (mut client, server) = UnixStream::pair().unwrap();
         let runtime = Arc::new(Mutex::new(Runtime::new()));
-        let server_runtime = Arc::clone(&runtime);
-        let server_thread = thread::spawn(move || handle_client(server, &server_runtime));
+        let server_state = mounted_state(Arc::clone(&runtime));
+        let server_thread = thread::spawn(move || handle_client_with_state(server, &server_state));
 
         send_hello(&mut client);
         write_frame(&mut client, &Request::ProviderRegister).unwrap();
@@ -1495,6 +1621,7 @@ mod tests {
             response,
             Response::PromiseCommitted(PromiseCommittedBody {
                 promise_id: "promise-1".to_owned(),
+                visible_path: "/tmp/fuse-promise/promise-1".to_owned(),
             })
         );
 
@@ -1508,11 +1635,45 @@ mod tests {
     }
 
     #[test]
-    fn promise_commit_rejects_unknown_provider() {
+    fn promise_commit_rejects_unmounted_state_without_mutating_runtime() {
         let (mut client, server) = UnixStream::pair().unwrap();
         let runtime = Arc::new(Mutex::new(Runtime::new()));
         let server_runtime = Arc::clone(&runtime);
         let server_thread = thread::spawn(move || handle_client(server, &server_runtime));
+
+        send_hello(&mut client);
+        write_frame(&mut client, &Request::ProviderRegister).unwrap();
+        let provider_id = match read_frame(&mut client).unwrap().unwrap() {
+            Response::ProviderRegistered { provider_id } => provider_id,
+            other => panic!("unexpected response: {other:?}"),
+        };
+
+        write_frame(
+            &mut client,
+            &Request::PromiseCommit(sample_commit_request(provider_id).into_body()),
+        )
+        .unwrap();
+        let response: Response = read_frame(&mut client).unwrap().unwrap();
+
+        assert_eq!(
+            response,
+            Response::Error(ErrorBody {
+                code: ErrorCode::Unavailable,
+                message: "unavailable".to_owned(),
+            })
+        );
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
+        assert_eq!(runtime.lock().unwrap().promise_count(), 0);
+    }
+
+    #[test]
+    fn promise_commit_rejects_unknown_provider() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let server_state = mounted_state(Arc::clone(&runtime));
+        let server_thread = thread::spawn(move || handle_client_with_state(server, &server_state));
 
         send_hello(&mut client);
         write_frame(
@@ -1563,8 +1724,8 @@ mod tests {
     fn provider_connection_drop_marks_owned_promises_provider_gone() {
         let (mut client, server) = UnixStream::pair().unwrap();
         let runtime = Arc::new(Mutex::new(Runtime::new()));
-        let server_runtime = Arc::clone(&runtime);
-        let server_thread = thread::spawn(move || handle_client(server, &server_runtime));
+        let server_state = mounted_state(Arc::clone(&runtime));
+        let server_thread = thread::spawn(move || handle_client_with_state(server, &server_state));
 
         send_hello(&mut client);
         write_frame(&mut client, &Request::ProviderRegister).unwrap();
@@ -1582,6 +1743,7 @@ mod tests {
             response,
             Response::PromiseCommitted(PromiseCommittedBody {
                 promise_id: "promise-1".to_owned(),
+                visible_path: "/tmp/fuse-promise/promise-1".to_owned(),
             })
         );
 
@@ -1741,14 +1903,14 @@ mod tests {
         let socket_path = unique_socket_path();
         let listener = UnixListener::bind(&socket_path).unwrap();
         let runtime = Arc::new(Mutex::new(Runtime::new()));
-        let server_runtime = Arc::clone(&runtime);
+        let server_state = mounted_state(Arc::clone(&runtime));
         let server_thread = thread::spawn(move || {
             let mut children = Vec::new();
             for _ in 0..2 {
                 let (stream, _) = listener.accept().unwrap();
-                let runtime = Arc::clone(&server_runtime);
+                let state = server_state.clone();
                 children.push(thread::spawn(move || {
-                    handle_client(stream, &runtime).unwrap();
+                    handle_client_with_state(stream, &state).unwrap();
                 }));
             }
             for child in children {
@@ -1761,6 +1923,10 @@ mod tests {
             commit_promise(&socket_path, sample_commit_request(provider.provider_id())).unwrap();
 
         assert_eq!(response.promise_id, "promise-1");
+        assert_eq!(
+            response.visible_path,
+            PathBuf::from("/tmp/fuse-promise/promise-1")
+        );
         drop(provider);
         server_thread.join().unwrap();
         assert!(runtime
@@ -1873,6 +2039,14 @@ mod tests {
                 api_version: API_VERSION,
             }
         );
+    }
+
+    fn mounted_state(runtime: Arc<Mutex<Runtime>>) -> IpcState {
+        let state = IpcState::new(runtime);
+        state
+            .set_mount_status(IpcMountStatus::mounted(PathBuf::from("/tmp/fuse-promise")))
+            .unwrap();
+        state
     }
 
     fn unique_socket_path() -> PathBuf {

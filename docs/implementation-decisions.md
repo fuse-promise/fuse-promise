@@ -63,6 +63,11 @@ Dependencies should be added to individual crates only when the implementation
 uses them. The workspace manifest fixes allowed versions; it is not a reason
 to import every dependency everywhere.
 
+The daemon exposes FUSE mounting behind its `fuse-mount` feature. This keeps
+the default workspace build green on machines that have only the FUSE runtime
+tools installed. Enabling the feature requires `pkg-config` and libfuse3
+development metadata so `fuser` can link the libfuse3 mount implementation.
+
 ## Dependency Table
 
 | Area | Decision | Version | First Used | Notes |
@@ -106,6 +111,12 @@ Configuration:
 
 ```toml
 fuser = { version = "0.17.0", default-features = false, features = ["abi-7-31", "libfuse3"] }
+```
+
+Daemon feature gate:
+
+```toml
+fuse-mount = ["dep:fuser"]
 ```
 
 System packages expected for development and runtime:

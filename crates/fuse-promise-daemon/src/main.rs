@@ -1,3 +1,5 @@
+mod fuse_adapter;
+
 use fuse_promise_ipc::{serve_state, IpcState};
 use fuse_promise_runtime::{default_control_socket_path, default_mount_path, Runtime};
 use std::env;
@@ -32,14 +34,27 @@ fn main() -> ExitCode {
                     return ExitCode::from(1);
                 }
             }
-            println!("status=not-mounted");
-            println!("fuse_adapter=not-implemented");
             if foreground {
                 println!("mode=foreground");
             }
 
             let runtime = Arc::new(Mutex::new(Runtime::new()));
-            let ipc_state = IpcState::new(runtime);
+            let ipc_state = IpcState::new(Arc::clone(&runtime));
+            let fuse_mount = match fuse_adapter::start(&path, runtime) {
+                Ok(mount) => mount,
+                Err(error) => {
+                    eprintln!("fuse-promised: failed to mount {}: {error}", path.display());
+                    return ExitCode::from(1);
+                }
+            };
+            let mount_status = fuse_adapter::mount_status(&path, &fuse_mount);
+            if let Err(error) = ipc_state.set_mount_status(mount_status.clone()) {
+                eprintln!("fuse-promised: {error}");
+                return ExitCode::from(1);
+            }
+            println!("mount={}", mount_status.mount);
+            println!("fuse_adapter={}", mount_status.fuse_adapter);
+
             match serve_state(ipc_state) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
@@ -59,5 +74,5 @@ fn print_help() {
     println!("usage: fuse-promised [--foreground]");
     println!();
     println!("Starts the user-session Promise filesystem daemon.");
-    println!("The current skeleton serves private status IPC only; FUSE is not implemented.");
+    println!("FUSE mounting requires building the daemon with the fuse-mount feature.");
 }

@@ -380,7 +380,8 @@ client-local Promise namespace.
 The public library also owns the provider-side callback dispatch loop. Private
 read requests received on the provider connection are converted into
 `fp_read_request_t` / `fp_read_response_t` calls inside the provider process.
-Daemon-originated FUSE read routing into that channel is still Phase 1 work.
+The daemon IPC state routes daemon-originated read requests into that channel
+and validates that responses come back over the registered provider connection.
 
 The daemon runtime plans reads before provider IPC. Planning resolves the
 committed Promise tree, enforces provider ownership and provider liveness,
@@ -392,6 +393,15 @@ matched to validated responses.
 Runtime directory validation rejects missing, relative, non-directory,
 foreign-owned, or group/other-accessible `XDG_RUNTIME_DIR` paths before mount
 or control socket paths are derived.
+
+The daemon owns mount lifecycle reporting. Default builds keep the FUSE adapter
+disabled so the workspace remains buildable without libfuse3 development
+packages; builds with the `fuse-mount` feature create the user-session
+mountpoint and hold the `fuser` background session handle for daemon lifetime.
+Private metadata commit checks this shared mount state before mutating the
+runtime. A mounted daemon state returns the future visible promise path; an
+unmounted or disabled daemon returns unavailable and leaves the runtime
+unchanged.
 
 ## Failure Model
 

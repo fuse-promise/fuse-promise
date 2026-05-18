@@ -30,6 +30,8 @@ plugins, or application-specific integrations.
 - [x] `fuse-promised --foreground` serves the private status IPC socket.
 - [x] Private IPC can register and unregister daemon-owned provider sessions.
 - [x] Private IPC can commit metadata snapshots into the daemon-owned runtime.
+- [x] Private metadata commit is gated on mount readiness and rejects disabled
+  or unmounted daemon state before mutating runtime.
 - [x] Private IPC has bounded provider read request/response message helpers.
 - [x] Private IPC propagates provider disconnect on provider connection close.
 - [x] `libfusepromise.so` provider registration uses private daemon IPC.
@@ -37,6 +39,9 @@ plugins, or application-specific integrations.
   public C read callback.
 - [x] Runtime read planning enforces provider ownership, file node type,
   provider-gone state, and EOF capping.
+- [~] FUSE mount lifecycle is wired behind the daemon `fuse-mount` feature;
+  the current environment still lacks `pkg-config` / libfuse3 development
+  metadata for enabled-feature verification.
 - [x] Runtime rejects missing, relative, non-directory, foreign-owned, or
   group/other-accessible `XDG_RUNTIME_DIR` paths.
 - [x] `fpctl status` queries the daemon when connected and falls back to
@@ -168,11 +173,11 @@ Acceptance:
 
 ### G1.4 Metadata Commit
 
-- [ ] Serialize builder metadata through private IPC.
-- [ ] Validate normalized relative paths in the daemon.
-- [ ] Validate node type, permission bits, file size, mtime, duplicate paths,
+- [~] Serialize builder metadata through private IPC.
+- [x] Validate normalized relative paths in the daemon.
+- [~] Validate node type, permission bits, file size, mtime, duplicate paths,
   and parent directories.
-- [ ] Commit static snapshot Promise trees.
+- [x] Commit static snapshot Promise trees.
 - [ ] Return a visible path under `$XDG_RUNTIME_DIR/fuse-promise/`.
 
 Acceptance:
@@ -185,10 +190,10 @@ Acceptance:
 ### G1.5 User-Session FUSE Mount
 
 - [x] Pick and document the internal FUSE backend.
-- [ ] Mount `$XDG_RUNTIME_DIR/fuse-promise/`.
+- [~] Mount `$XDG_RUNTIME_DIR/fuse-promise/`.
 - [x] Fail explicitly if `XDG_RUNTIME_DIR` is missing, not absolute, unsafe, or
   not owned by the current user.
-- [ ] Cleanly unmount on daemon exit.
+- [~] Cleanly unmount on daemon exit.
 - [ ] Keep mount lifecycle user-session scoped.
 
 Acceptance:
