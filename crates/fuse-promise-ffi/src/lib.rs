@@ -208,7 +208,7 @@ pub unsafe extern "C" fn fp_provider_unregister(provider: *mut fp_provider) {
     {
         let inner = provider.inner.clone();
         if let Ok(mut runtime) = inner.runtime.lock() {
-            runtime.unregister_provider(provider.id);
+            let _ = runtime.unregister_provider(provider.id);
         };
     }
 }

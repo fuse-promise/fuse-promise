@@ -43,6 +43,14 @@ pub type Result<T> = std::result::Result<T, Status>;
 pub struct ProviderId(u64);
 
 impl ProviderId {
+    pub fn from_raw(raw: u64) -> Option<Self> {
+        if raw == 0 {
+            None
+        } else {
+            Some(Self(raw))
+        }
+    }
+
     pub const fn raw(self) -> u64 {
         self.0
     }
@@ -283,15 +291,19 @@ impl Runtime {
         provider_id
     }
 
-    pub fn unregister_provider(&mut self, provider_id: ProviderId) {
-        if let Some(provider) = self.providers.get_mut(&provider_id) {
-            provider.state = ProviderState::Disconnected;
-        }
+    pub fn unregister_provider(&mut self, provider_id: ProviderId) -> Result<()> {
+        let Some(provider) = self.providers.get_mut(&provider_id) else {
+            return Err(Status::NotFound);
+        };
+
+        provider.state = ProviderState::Disconnected;
         for promise in self.promises.values_mut() {
             if promise.provider_id == provider_id && promise.state == PromiseState::Available {
                 promise.state = PromiseState::ProviderGone;
             }
         }
+
+        Ok(())
     }
 
     pub fn has_provider(&self, provider_id: ProviderId) -> bool {
@@ -480,7 +492,7 @@ mod tests {
         let builder = PromiseBuilder::new(provider);
         let tree = runtime.commit_promise(builder).unwrap();
 
-        runtime.unregister_provider(provider);
+        runtime.unregister_provider(provider).unwrap();
 
         assert_eq!(
             runtime.provider(provider).unwrap().state,
@@ -496,10 +508,18 @@ mod tests {
     fn commit_fails_after_provider_unregisters() {
         let mut runtime = Runtime::new();
         let provider = runtime.register_provider();
-        runtime.unregister_provider(provider);
+        runtime.unregister_provider(provider).unwrap();
 
         let builder = PromiseBuilder::new(provider);
         assert_eq!(runtime.commit_promise(builder), Err(Status::ProviderGone));
+    }
+
+    #[test]
+    fn unregister_rejects_unknown_provider() {
+        let mut runtime = Runtime::new();
+        let provider = ProviderId::from_raw(99).unwrap();
+
+        assert_eq!(runtime.unregister_provider(provider), Err(Status::NotFound));
     }
 
     #[test]

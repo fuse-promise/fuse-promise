@@ -170,8 +170,8 @@ Minimum message families:
 
 - `Hello` / version negotiation. Implemented for status.
 - `Status`. Implemented.
-- `ProviderRegister`.
-- `ProviderUnregister`.
+- `ProviderRegister`. Implemented as a private message.
+- `ProviderUnregister`. Implemented as a private message.
 - `PromiseCommit`.
 - `ProviderReadRequest`.
 - `ProviderReadResponse`.

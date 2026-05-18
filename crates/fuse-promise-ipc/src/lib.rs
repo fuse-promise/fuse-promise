@@ -52,6 +52,10 @@ enum Request {
         api_version: u32,
     },
     Status,
+    ProviderRegister,
+    ProviderUnregister {
+        provider_id: u64,
+    },
 }
 
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
@@ -61,6 +65,10 @@ enum Response {
         api_version: u32,
     },
     Status(StatusBody),
+    ProviderRegistered {
+        provider_id: u64,
+    },
+    ProviderUnregistered,
     Error(ErrorBody),
 }
 
@@ -115,19 +123,19 @@ struct ErrorBody {
 enum ErrorCode {
     InvalidRequest,
     VersionMismatch,
+    NotFound,
+    ProviderGone,
+    Permission,
     Internal,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderRegistration {
+    pub provider_id: u64,
+}
+
 pub fn query_status(socket_path: &Path) -> io::Result<String> {
-    let mut stream = UnixStream::connect(socket_path)?;
-    write_frame(
-        &mut stream,
-        &Request::Hello {
-            protocol_version: IPC_PROTOCOL_VERSION,
-            api_version: API_VERSION,
-        },
-    )?;
-    expect_hello(read_response(&mut stream)?)?;
+    let mut stream = connect_and_hello(socket_path)?;
 
     write_frame(&mut stream, &Request::Status)?;
     match read_response(&mut stream)? {
@@ -137,6 +145,45 @@ pub fn query_status(socket_path: &Path) -> io::Result<String> {
             "daemon returned an unexpected status response",
         )),
     }
+}
+
+pub fn register_provider(socket_path: &Path) -> io::Result<ProviderRegistration> {
+    let mut stream = connect_and_hello(socket_path)?;
+
+    write_frame(&mut stream, &Request::ProviderRegister)?;
+    match read_response(&mut stream)? {
+        Response::ProviderRegistered { provider_id } => Ok(ProviderRegistration { provider_id }),
+        Response::Error(error) => Err(error_to_io(error)),
+        _ => Err(invalid_data(
+            "daemon returned an unexpected provider register response",
+        )),
+    }
+}
+
+pub fn unregister_provider(socket_path: &Path, provider_id: u64) -> io::Result<()> {
+    let mut stream = connect_and_hello(socket_path)?;
+
+    write_frame(&mut stream, &Request::ProviderUnregister { provider_id })?;
+    match read_response(&mut stream)? {
+        Response::ProviderUnregistered => Ok(()),
+        Response::Error(error) => Err(error_to_io(error)),
+        _ => Err(invalid_data(
+            "daemon returned an unexpected provider unregister response",
+        )),
+    }
+}
+
+fn connect_and_hello(socket_path: &Path) -> io::Result<UnixStream> {
+    let mut stream = UnixStream::connect(socket_path)?;
+    write_frame(
+        &mut stream,
+        &Request::Hello {
+            protocol_version: IPC_PROTOCOL_VERSION,
+            api_version: API_VERSION,
+        },
+    )?;
+    expect_hello(read_response(&mut stream)?)?;
+    Ok(stream)
 }
 
 pub fn serve_status(runtime: Arc<Mutex<Runtime>>) -> io::Result<()> {
@@ -205,6 +252,46 @@ fn handle_client(mut stream: UnixStream, runtime: &Arc<Mutex<Runtime>>) -> io::R
                     "client must send hello before status",
                 )?;
             }
+            Request::ProviderRegister if negotiated => {
+                let mut runtime = runtime
+                    .lock()
+                    .map_err(|_| io::Error::other("runtime lock poisoned"))?;
+                let provider_id = runtime.register_provider().raw();
+                write_frame(&mut stream, &Response::ProviderRegistered { provider_id })?;
+            }
+            Request::ProviderRegister => {
+                write_error(
+                    &mut stream,
+                    ErrorCode::InvalidRequest,
+                    "client must send hello before provider register",
+                )?;
+            }
+            Request::ProviderUnregister { provider_id } if negotiated => {
+                let Some(provider_id) = fuse_promise_runtime::ProviderId::from_raw(provider_id)
+                else {
+                    write_error(
+                        &mut stream,
+                        ErrorCode::InvalidRequest,
+                        "provider id must be nonzero",
+                    )?;
+                    continue;
+                };
+
+                let mut runtime = runtime
+                    .lock()
+                    .map_err(|_| io::Error::other("runtime lock poisoned"))?;
+                match runtime.unregister_provider(provider_id) {
+                    Ok(()) => write_frame(&mut stream, &Response::ProviderUnregistered)?,
+                    Err(status) => write_status_error(&mut stream, status)?,
+                }
+            }
+            Request::ProviderUnregister { .. } => {
+                write_error(
+                    &mut stream,
+                    ErrorCode::InvalidRequest,
+                    "client must send hello before provider unregister",
+                )?;
+            }
         }
     }
 
@@ -243,6 +330,13 @@ where
             message: message.to_owned(),
         }),
     )
+}
+
+fn write_status_error<W>(writer: &mut W, status: Status) -> io::Result<()>
+where
+    W: Write,
+{
+    write_error(writer, status_to_error_code(status), status.as_str())
 }
 
 fn read_frame<R, T>(reader: &mut R) -> io::Result<Option<T>>
@@ -327,10 +421,23 @@ fn remove_stale_socket(socket_path: &Path) -> io::Result<()> {
 fn error_to_io(error: ErrorBody) -> io::Error {
     let kind = match error.code {
         ErrorCode::InvalidRequest | ErrorCode::VersionMismatch => io::ErrorKind::InvalidData,
+        ErrorCode::NotFound | ErrorCode::ProviderGone => io::ErrorKind::NotFound,
+        ErrorCode::Permission => io::ErrorKind::PermissionDenied,
         ErrorCode::Internal => io::ErrorKind::Other,
     };
 
     io::Error::new(kind, error.message)
+}
+
+fn status_to_error_code(status: Status) -> ErrorCode {
+    match status {
+        Status::InvalidArgument => ErrorCode::InvalidRequest,
+        Status::Permission => ErrorCode::Permission,
+        Status::NotFound => ErrorCode::NotFound,
+        Status::ProviderGone => ErrorCode::ProviderGone,
+        Status::VersionMismatch => ErrorCode::VersionMismatch,
+        _ => ErrorCode::Internal,
+    }
 }
 
 fn encode_error_to_io(error: bincode::error::EncodeError) -> io::Error {
@@ -352,8 +459,10 @@ fn status_to_io(status: Status) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fuse_promise_runtime::ProviderState;
     use std::io::Cursor;
     use std::thread;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn status_encoding_is_key_value_text() {
@@ -496,5 +605,121 @@ mod tests {
 
         drop(client);
         server_thread.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn provider_register_and_unregister_mutate_runtime() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let server_runtime = Arc::clone(&runtime);
+        let server_thread = thread::spawn(move || handle_client(server, &server_runtime));
+
+        send_hello(&mut client);
+
+        write_frame(&mut client, &Request::ProviderRegister).unwrap();
+        let response: Response = read_frame(&mut client).unwrap().unwrap();
+        let provider_id = match response {
+            Response::ProviderRegistered { provider_id } => provider_id,
+            other => panic!("unexpected response: {other:?}"),
+        };
+        assert_eq!(provider_id, 1);
+
+        write_frame(&mut client, &Request::ProviderUnregister { provider_id }).unwrap();
+        let response: Response = read_frame(&mut client).unwrap().unwrap();
+        assert_eq!(response, Response::ProviderUnregistered);
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
+
+        let provider_id = fuse_promise_runtime::ProviderId::from_raw(provider_id).unwrap();
+        assert_eq!(
+            runtime.lock().unwrap().provider(provider_id).unwrap().state,
+            ProviderState::Disconnected
+        );
+    }
+
+    #[test]
+    fn provider_unregister_rejects_unknown_provider() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let server_runtime = Arc::clone(&runtime);
+        let server_thread = thread::spawn(move || handle_client(server, &server_runtime));
+
+        send_hello(&mut client);
+        write_frame(
+            &mut client,
+            &Request::ProviderUnregister { provider_id: 99 },
+        )
+        .unwrap();
+        let response: Response = read_frame(&mut client).unwrap().unwrap();
+
+        assert_eq!(
+            response,
+            Response::Error(ErrorBody {
+                code: ErrorCode::NotFound,
+                message: "not found".to_owned(),
+            })
+        );
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn provider_helpers_use_unix_socket() {
+        let socket_path = unique_socket_path();
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let server_runtime = Arc::clone(&runtime);
+        let server_thread = thread::spawn(move || {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().unwrap();
+                handle_client(stream, &server_runtime).unwrap();
+            }
+        });
+
+        let registration = register_provider(&socket_path).unwrap();
+        unregister_provider(&socket_path, registration.provider_id).unwrap();
+
+        server_thread.join().unwrap();
+        let provider_id =
+            fuse_promise_runtime::ProviderId::from_raw(registration.provider_id).unwrap();
+        assert_eq!(
+            runtime.lock().unwrap().provider(provider_id).unwrap().state,
+            ProviderState::Disconnected
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    fn send_hello(stream: &mut UnixStream) {
+        write_frame(
+            stream,
+            &Request::Hello {
+                protocol_version: IPC_PROTOCOL_VERSION,
+                api_version: API_VERSION,
+            },
+        )
+        .unwrap();
+
+        let response: Response = read_frame(stream).unwrap().unwrap();
+        assert_eq!(
+            response,
+            Response::Hello {
+                protocol_version: IPC_PROTOCOL_VERSION,
+                api_version: API_VERSION,
+            }
+        );
+    }
+
+    fn unique_socket_path() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "fuse-promise-ipc-{}-{nanos}.sock",
+            std::process::id()
+        ))
     }
 }

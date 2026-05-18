@@ -28,6 +28,7 @@ plugins, or application-specific integrations.
   provider disconnect state, and mode/directory size validation.
 - [x] Private IPC crate has a Unix socket with bounded framed status messages.
 - [x] `fuse-promised --foreground` serves the private status IPC socket.
+- [x] Private IPC can register and unregister daemon-owned provider sessions.
 - [x] `fpctl status` queries the daemon when connected and falls back to
   `daemon=not-connected` when disconnected.
 - [x] `fp_promise_commit()` and `fp_materialize()` return
@@ -119,7 +120,7 @@ Acceptance:
 - [x] Add handshake/version negotiation.
 - [x] Add max message size checks.
 - [x] Add Unix peer credential validation where available.
-- [ ] Add provider register/unregister messages.
+- [x] Add provider register/unregister messages.
 - [ ] Add Promise commit request/response messages.
 - [ ] Add provider read request/response messages.
 - [ ] Add provider disconnect propagation.

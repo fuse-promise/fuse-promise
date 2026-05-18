@@ -121,9 +121,9 @@ Minimum IPC operations:
 - Provider read request and response.
 - Materialize start, progress, cancellation, and result.
 
-The current implementation provides runtime status over a bounded framed
-protocol on a private Unix socket. Other IPC operations are still under
-development.
+The current implementation provides runtime status and provider
+register/unregister messages over a bounded framed protocol on a private Unix
+socket. Other IPC operations are still under development.
 
 ## Lifecycle
 
