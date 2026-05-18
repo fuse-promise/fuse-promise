@@ -483,13 +483,16 @@ Acceptance:
 - [x] Provide build instructions.
 - [x] Provide changelog and release notes.
 - [x] Document visible filesystem layout.
-- [ ] Prepare first stable ABI release.
+- [~] Prepare first stable ABI release.
 
 Suggested verification:
 
 ```sh
 tests/install-metadata.sh
 ```
+
+`docs/stable-abi-release.md` defines the remaining stable ABI release gates and
+blockers.
 
 ## Cross-Cutting Verification Gates
 

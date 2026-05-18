@@ -154,6 +154,7 @@ Those projects should live outside this repository and use the public API.
 - [Runtime](docs/runtime.md)
 - [Security](docs/security.md)
 - [Packaging](docs/packaging.md)
+- [Stable ABI Release Readiness](docs/stable-abi-release.md)
 - [Development Style](docs/development-style.md)
 - [Roadmap](docs/roadmap.md)
 - [Progress Goals](docs/progress.md)
