@@ -10,3 +10,7 @@
 *.service text eol=lf
 *.pc text eol=lf
 
+.codex/ export-ignore
+.github/ export-ignore
+dist/ export-ignore
+target/ export-ignore

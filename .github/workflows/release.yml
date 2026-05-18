@@ -33,9 +33,11 @@ env:
   CLOUDSMITH_RPM_RELEASE: ${{ vars.CLOUDSMITH_RPM_RELEASE || '9' }}
 
 jobs:
-  package:
-    name: Build and publish packages
-    runs-on: ${{ fromJSON(vars.RELEASE_RUNNER || '"ubuntu-22.04"') }}
+  validate:
+    name: Validate release
+    runs-on: ${{ fromJSON(vars.RELEASE_VALIDATION_RUNNER || vars.RELEASE_RUNNER || '"ubuntu-22.04"') }}
+    outputs:
+      mounted_fuse_gates: ${{ steps.mounted-fuse-gates.outputs.status }}
 
     steps:
       - name: Checkout tag
@@ -72,10 +74,10 @@ jobs:
           if command -v apt-get >/dev/null 2>&1; then
             if command -v sudo >/dev/null 2>&1; then
               sudo apt-get update
-              sudo apt-get install -y build-essential pkg-config libfuse3-dev fuse3 rpm python3-pip
+              sudo apt-get install -y build-essential pkg-config libfuse3-dev fuse3
             elif [ "$(id -u)" -eq 0 ]; then
               apt-get update
-              apt-get install -y build-essential pkg-config libfuse3-dev fuse3 rpm python3-pip
+              apt-get install -y build-essential pkg-config libfuse3-dev fuse3
             else
               echo "::notice::apt-get is available but sudo is not; assuming runner dependencies are preinstalled."
             fi
@@ -86,11 +88,6 @@ jobs:
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt
           rustup default "$RUST_TOOLCHAIN"
 
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GO_TOOLCHAIN }}
-
       - name: Cache Cargo state
         uses: actions/cache@v5
         with:
@@ -98,9 +95,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-
+            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_TOOLCHAIN }}-
 
       - name: Run release gates
         run: |
@@ -123,9 +120,57 @@ jobs:
             echo "status=passed" >> "$GITHUB_OUTPUT"
           else
             echo "::notice::Mounted FUSE gates skipped because this runner lacks /dev/fuse, fusermount3, or fuse3 pkg-config metadata."
-            echo "::notice::Run the FUSE Stable Gates workflow on a self-hosted linux/fuse runner for strict release validation."
+            echo "::notice::Use RELEASE_VALIDATION_RUNNER=[\"self-hosted\",\"linux\",\"fuse\"] for strict package repository publishing."
             echo "status=skipped" >> "$GITHUB_OUTPUT"
           fi
+
+  package:
+    name: Package ${{ matrix.package_arch }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package_arch: amd64
+            rpm_arch: x86_64
+            runner: ubuntu-22.04
+          - package_arch: arm64
+            rpm_arch: aarch64
+            runner: ubuntu-22.04-arm
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libfuse3-dev fuse3 rpm
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_TOOLCHAIN }}
+
+      - name: Cache Cargo state
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_TOOLCHAIN }}-
 
       - name: Install nFPM
         run: |
@@ -133,20 +178,59 @@ jobs:
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
 
       - name: Build DEB and RPM packages
+        env:
+          FUSE_PROMISE_ARCH: ${{ matrix.package_arch }}
+          FUSE_PROMISE_RPM_ARCH: ${{ matrix.rpm_arch }}
+          DIST_DIR: dist/${{ matrix.package_arch }}
         run: scripts/package-linux.sh
 
-      - name: Upload workflow artifacts
+      - name: Upload package artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: fuse-promise-${{ env.RELEASE_TAG }}-linux-packages
+          name: fuse-promise-${{ env.RELEASE_TAG }}-${{ matrix.package_arch }}-packages
+          path: |
+            dist/${{ matrix.package_arch }}/*.deb
+            dist/${{ matrix.package_arch }}/*.rpm
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs:
+      - validate
+      - package
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: fuse-promise-${{ env.RELEASE_TAG }}-*-packages
+          path: dist
+          merge-multiple: true
+
+      - name: Build source tarball and checksums
+        env:
+          SOURCE_REF: ${{ env.RELEASE_TAG }}
+        run: scripts/package-source.sh
+
+      - name: Upload complete release artifact bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuse-promise-${{ env.RELEASE_TAG }}-release-assets
           path: dist/*
           if-no-files-found: error
 
       - name: Require mounted FUSE gates for package repository publish
-        if: ${{ env.CLOUDSMITH_API_KEY != '' && env.CLOUDSMITH_REPOSITORY != '' && steps.mounted-fuse-gates.outputs.status != 'passed' }}
+        if: ${{ env.CLOUDSMITH_API_KEY != '' && env.CLOUDSMITH_REPOSITORY != '' && needs.validate.outputs.mounted_fuse_gates != 'passed' }}
         run: |
           echo "::error::Cloudsmith package repository publish requires mounted FUSE gates to pass."
-          echo "::error::Run this release on a runner with /dev/fuse, fusermount3, and fuse3 pkg-config metadata."
+          echo "::error::Run validation on a runner with /dev/fuse, fusermount3, and fuse3 pkg-config metadata."
           exit 1
 
       - name: Publish GitHub release assets
@@ -163,11 +247,16 @@ jobs:
           fi
 
       - name: Install Cloudsmith CLI
-        if: ${{ env.CLOUDSMITH_API_KEY != '' && env.CLOUDSMITH_REPOSITORY != '' && steps.mounted-fuse-gates.outputs.status == 'passed' }}
-        run: python3 -m pip install --user cloudsmith-cli
+        if: ${{ env.CLOUDSMITH_API_KEY != '' && env.CLOUDSMITH_REPOSITORY != '' && needs.validate.outputs.mounted_fuse_gates == 'passed' }}
+        run: |
+          if ! python3 -m pip --version >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y python3-pip
+          fi
+          python3 -m pip install --user cloudsmith-cli
 
       - name: Publish package repository assets to Cloudsmith
-        if: ${{ env.CLOUDSMITH_API_KEY != '' && env.CLOUDSMITH_REPOSITORY != '' && steps.mounted-fuse-gates.outputs.status == 'passed' }}
+        if: ${{ env.CLOUDSMITH_API_KEY != '' && env.CLOUDSMITH_REPOSITORY != '' && needs.validate.outputs.mounted_fuse_gates == 'passed' }}
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           for package in dist/*.deb; do

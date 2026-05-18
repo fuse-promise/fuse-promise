@@ -15,18 +15,28 @@ command -v sha256sum >/dev/null || fail "sha256sum is required"
 version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_dir/Cargo.toml" | head -n 1)
 [ -n "$version" ] || fail "could not read workspace version"
 
+case "$(uname -m)" in
+    x86_64) host_package_arch=amd64 ;;
+    aarch64 | arm64) host_package_arch=arm64 ;;
+    *) host_package_arch= ;;
+esac
+
 case "${FUSE_PROMISE_ARCH:-}" in
     "")
-        case "$(uname -m)" in
-            x86_64) package_arch=amd64 ;;
-            aarch64 | arm64) package_arch=arm64 ;;
-            *) fail "unsupported host architecture $(uname -m); set FUSE_PROMISE_ARCH explicitly" ;;
-        esac
+        [ -n "$host_package_arch" ] \
+            || fail "unsupported host architecture $(uname -m); set FUSE_PROMISE_ARCH explicitly"
+        package_arch=$host_package_arch
         ;;
     *)
         package_arch=$FUSE_PROMISE_ARCH
         ;;
 esac
+
+if [ -n "$host_package_arch" ] \
+    && [ "$package_arch" != "$host_package_arch" ] \
+    && [ "${FUSE_PROMISE_ALLOW_ARCH_OVERRIDE:-}" != 1 ]; then
+    fail "cross-architecture packaging is not supported by this script; run on $package_arch or set FUSE_PROMISE_ALLOW_ARCH_OVERRIDE=1"
+fi
 
 case "${FUSE_PROMISE_RPM_ARCH:-}" in
     "")

@@ -102,6 +102,25 @@ The generated packages contain the public C ABI, shared library symlinks for
 SONAME major `1`, pkg-config metadata, `fuse-promised`, `fpctl`, and the
 systemd user service.
 
+Release builds produce native Linux packages for the main CPU architectures:
+
+```text
+fuse-promise_<version>-1_amd64.deb
+fuse-promise_<version>-1_arm64.deb
+fuse-promise-<version>-1.x86_64.rpm
+fuse-promise-<version>-1.aarch64.rpm
+fuse-promise-<version>.tar.gz
+SHA256SUMS
+```
+
+Architecture names differ by package family: Debian uses `amd64` and `arm64`,
+while RPM uses `x86_64` and `aarch64`.
+
+Distribution names such as Ubuntu Jammy, Ubuntu Noble, Debian Bookworm, EL 9,
+or Fedora are repository metadata targets. They do not always require separate
+binary builds. Build separate distribution packages only when dependency names,
+library ABI, or service layout differ.
+
 ## GitHub Actions
 
 The repository uses custom workflows instead of the generic GitHub Rust
@@ -112,16 +131,17 @@ template:
 - `FUSE Stable Gates` runs `tests/stable-release-gates.sh` on a self-hosted
   runner labeled `linux` and `fuse`, because mounted FUSE tests require
   `/dev/fuse` and `fusermount3`.
-- `Release` builds DEB/RPM artifacts for `v*` tags, uploads them to the GitHub
-  Release, and optionally publishes them to Cloudsmith.
+- `Release` validates the tag, builds DEB/RPM artifacts for `amd64` and
+  `arm64`, builds a source tarball, uploads them to the GitHub Release, and
+  optionally publishes packages to Cloudsmith.
 - Cloudsmith repository publishing is gated on the mounted FUSE tests passing.
   If a GitHub-hosted runner lacks `/dev/fuse`, the workflow can still build
   GitHub Release assets, but public apt/yum repository publishing requires a
   runner with FUSE support.
 
-Set the optional `RELEASE_RUNNER` repository variable to choose the runner for
-the `Release` workflow. The default is `"ubuntu-22.04"`. To publish through a
-self-hosted FUSE runner, set it to JSON:
+Set the optional `RELEASE_VALIDATION_RUNNER` repository variable to choose the
+runner for release validation. The default is `"ubuntu-22.04"`. To publish
+through a self-hosted FUSE runner, set it to JSON:
 
 ```json
 ["self-hosted", "linux", "fuse"]
