@@ -110,7 +110,7 @@ pass and one pushable commit.
 | [x] | 4 | Verify G1.5 real mount lifecycle | Feature daemon runtime with shared `XDG_RUNTIME_DIR`. | `mountpoint -q "$XDG_RUNTIME_DIR/fuse-promise"` succeeds, `fpctl status` reports mounted state, and daemon shutdown unmounts cleanly. |
 | [x] | 5 | Close G1.6 metadata-only FUSE ops | Feature-gated `lookup`, `getattr`, and `readdir` over daemon runtime. | `stat`, `ls`, and `find` work against a committed tree without provider read requests. |
 | [x] | 6 | Close G1.6 FUSE read routing | Feature-gated `open`, offset `read`, `release`, and errno mapping. | `cat` and offset `dd` request only needed byte ranges and provider errors map deterministically. |
-| [~] | 7 | Close G1.7 read-only MVP gate | End-to-end provider, commit, mount, inspect, lazy read, and disconnect behavior. | A provider-created tree is visible, metadata reads transfer no bytes, file reads route only requested ranges, and disconnect errors are deterministic. |
+| [x] | 7 | Close G1.7 read-only MVP gate | End-to-end provider, commit, mount, inspect, lazy read, and disconnect behavior. | A provider-created tree is visible, metadata reads transfer no bytes, file reads route only requested ranges, and disconnect errors are deterministic. |
 | [ ] | 8 | Start G2.1 single-file materialize | Private materialize IPC plus daemon file copy using the existing read path. | `fpctl materialize <promise-file> <target-dir>` writes matching file content and metadata. |
 | [ ] | 9 | Add G2.2 directory materialize | Recursive tree walk, directory creation, child file materialize, metadata application. | `diff -r` matches an expected directory tree. |
 | [ ] | 10 | Harden G3 developer ABI | Header/constant/layout/symbol/panic tests and C examples. | Public ABI tests pass and examples link only through the public header and pkg-config metadata. |
@@ -267,15 +267,20 @@ dd if="$XDG_RUNTIME_DIR/fuse-promise/<promise-id>/file" bs=1 skip=10 count=20
 
 Reads request only the byte ranges needed by the caller.
 
-Manual mounted smoke has covered a public C ABI provider committing a tree and
-filesystem access through `fpctl list`, `ls`, `stat`, `find`, `cat`, `cp`, and
-offset `dd`. A repeatable read-count harness remains part of the G1.7 gate.
+The repeatable FUSE smoke harness covers a public C ABI provider committing a
+tree and filesystem access through `fpctl status`, `fpctl list`, `find`, `ls`,
+`stat`, offset `dd`, `cat`, `cp`, provider disconnect, and provider-gone read
+failure:
+
+```sh
+tests/read-only-mvp-smoke.sh
+```
 
 ### G1.7 Read-Only MVP Gate
 
 - [x] A provider can create a promised directory tree.
 - [x] The tree appears under the user-session FUSE mount.
-- [~] `ls`, `stat`, and traversal work without content transfer.
+- [x] `ls`, `stat`, and traversal work without content transfer.
 - [x] `cat` and `cp` trigger provider lazy reads.
 - [x] Provider disconnect behavior is deterministic.
 - [x] `fpctl status` and minimal inspection commands report daemon state.
@@ -487,6 +492,7 @@ kill "$daemon_pid"
 wait "$daemon_pid" || true
 ! mountpoint -q "$XDG_RUNTIME_DIR/fuse-promise"
 fusermount3 -u "$XDG_RUNTIME_DIR/fuse-promise" || true
+tests/read-only-mvp-smoke.sh
 ```
 
 ## Out of Scope for This Repository

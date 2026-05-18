@@ -202,6 +202,8 @@ runtime and routes file reads back to registered providers. Private metadata
 commit uses this state as a readiness gate: disabled, unmounted, or mount-only
 daemons reject commit before mutating runtime state, while a commit-ready daemon
 state can return `$XDG_RUNTIME_DIR/fuse-promise/<promise-id>`.
+Promise file opens use FUSE direct I/O so the provider receives the caller's
+actual offset-based read ranges instead of kernel page-cache readahead ranges.
 
 Until a commit-ready FUSE namespace exists, public commit should return
 `FP_ERR_UNAVAILABLE`. Until materialize IPC exists, public materialize should

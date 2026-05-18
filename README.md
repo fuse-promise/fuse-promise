@@ -25,8 +25,9 @@ behind the `fuse-mount` feature; default builds report `fuse_adapter=disabled`
 until the libfuse3 development dependency is present. The feature-gated adapter
 now contains read-only `lookup`, `getattr`, `readdir`, `open`, `read`, and
 `release` callbacks over the daemon runtime and provider read routing. A real
-mounted committed-tree smoke covers `fpctl list`, `ls`, `stat`, `cat`, offset
-`dd`, and provider-gone read errors. The materialize engine is still under
+mounted committed-tree smoke is available as `tests/read-only-mvp-smoke.sh` and
+covers `fpctl status`, `fpctl list`, `find`, `ls`, `stat`, offset `dd`, `cat`,
+`cp`, and provider-gone read errors. The materialize engine is still under
 development. Private metadata commit is gated on commit readiness so disabled,
 unmounted, or mount-only daemon state cannot create invisible promises.
 `fp_promise_commit()` now routes through the daemon and can return a visible

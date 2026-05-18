@@ -141,7 +141,7 @@ impl fuser::Filesystem for PromiseFilesystem {
             Ok(RuntimeEntry::PromiseNode { node, .. }) if node.kind == NodeKind::File => {
                 reply.opened(
                     fuser::FileHandle(u64::from(ino)),
-                    fuser::FopenFlags::empty(),
+                    fuser::FopenFlags::FOPEN_DIRECT_IO,
                 );
             }
             Ok(RuntimeEntry::PromiseNode { .. }) | Ok(RuntimeEntry::MountRoot) => {

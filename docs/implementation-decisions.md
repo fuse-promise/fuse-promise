@@ -185,6 +185,8 @@ The FUSE adapter must stay thin:
 
 - Resolve inodes into runtime nodes.
 - Map `lookup`, `getattr`, `readdir`, `open`, `read`, and `release`.
+- Open Promise files with direct I/O so lazy provider reads preserve caller
+  offset and size rather than kernel page-cache readahead ranges.
 - Convert runtime errors into `errno`.
 - Avoid embedding Promise policy inside FUSE callback glue.
 
