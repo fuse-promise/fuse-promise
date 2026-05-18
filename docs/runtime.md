@@ -134,6 +134,11 @@ provider helper thread dispatches private read requests to the registered
 public C callback and writes the private read response back over the provider
 connection.
 
+The runtime can plan file reads from committed Promise metadata. A read plan
+resolves the owning provider, provider node id, normalized relative path,
+offset, and capped length, and rejects missing nodes, directories,
+provider-gone state, and disconnected providers before provider IPC is used.
+
 ## Lifecycle
 
 Recommended lifecycle:

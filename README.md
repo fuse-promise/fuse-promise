@@ -17,10 +17,12 @@ register/unregister IPC messages, private Promise metadata commit IPC, and
 private provider read request/response message helpers with connection-scoped
 provider disconnect propagation. `fp_provider_register()` now registers with
 the daemon through private IPC, and provider read requests received on that
-connection are dispatched to the public C callback. The FUSE adapter, daemon
-read routing, and materialize engine are still under development. The public
-commit and materialize calls currently return `FP_ERR_UNAVAILABLE` rather than
-claiming a visible FUSE path that does not exist yet.
+connection are dispatched to the public C callback. The runtime can plan
+provider-owned file reads with provider-gone and EOF handling. The FUSE
+adapter, daemon read routing, and materialize engine are still under
+development. The public commit and materialize calls currently return
+`FP_ERR_UNAVAILABLE` rather than claiming a visible FUSE path that does not
+exist yet.
 
 The first implementation target is a read-only Promise filesystem MVP:
 

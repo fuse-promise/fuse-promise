@@ -382,6 +382,10 @@ read requests received on the provider connection are converted into
 `fp_read_request_t` / `fp_read_response_t` calls inside the provider process.
 Daemon-originated FUSE read routing into that channel is still Phase 1 work.
 
+The daemon runtime plans reads before provider IPC. Planning resolves the
+committed Promise tree, enforces provider ownership and provider liveness,
+rejects non-file nodes, and caps read length at EOF.
+
 ## Failure Model
 
 The runtime must produce deterministic failures for:

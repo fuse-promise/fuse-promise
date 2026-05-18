@@ -128,6 +128,22 @@ pub struct PromiseTree {
     pub children: BTreeMap<String, BTreeSet<String>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadPlan {
+    Request(ProviderReadPlan),
+    Eof,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderReadPlan {
+    pub provider_id: ProviderId,
+    pub promise_id: String,
+    pub relative_path: String,
+    pub provider_node_id: String,
+    pub offset: u64,
+    pub length: u32,
+}
+
 impl PromiseTree {
     pub fn get(&self, relative_path: &str) -> Option<&PromiseNode> {
         normalize_relative_path(relative_path)
@@ -333,6 +349,46 @@ impl Runtime {
         self.promises.get(promise_id)
     }
 
+    pub fn plan_read(
+        &self,
+        promise_id: &str,
+        relative_path: &str,
+        offset: u64,
+        length: u32,
+    ) -> Result<ReadPlan> {
+        let tree = self.promise(promise_id).ok_or(Status::NotFound)?;
+        if tree.state != PromiseState::Available {
+            return Err(Status::ProviderGone);
+        }
+        if !self.has_provider(tree.provider_id) {
+            return Err(Status::ProviderGone);
+        }
+
+        let node = tree.get(relative_path).ok_or(Status::NotFound)?;
+        if node.kind != NodeKind::File {
+            return Err(Status::InvalidArgument);
+        }
+        if length == 0 || offset >= node.attr.size {
+            return Ok(ReadPlan::Eof);
+        }
+
+        let remaining = node.attr.size - offset;
+        let length = u64::from(length).min(remaining);
+        let length = u32::try_from(length).map_err(|_| Status::InvalidArgument)?;
+        if offset.checked_add(u64::from(length)).is_none() {
+            return Err(Status::InvalidArgument);
+        }
+
+        Ok(ReadPlan::Request(ProviderReadPlan {
+            provider_id: tree.provider_id,
+            promise_id: tree.promise_id.clone(),
+            relative_path: node.relative_path.clone(),
+            provider_node_id: node.provider_node_id.clone(),
+            offset,
+            length,
+        }))
+    }
+
     pub fn promises(&self) -> impl Iterator<Item = &PromiseTree> {
         self.promises.values()
     }
@@ -523,6 +579,90 @@ mod tests {
     }
 
     #[test]
+    fn plans_provider_owned_file_reads() {
+        let (runtime, provider) = runtime_with_file();
+
+        let plan = runtime
+            .plan_read("promise-1", "docs/readme.txt", 2, 8)
+            .unwrap();
+
+        assert_eq!(
+            plan,
+            ReadPlan::Request(ProviderReadPlan {
+                provider_id: provider,
+                promise_id: "promise-1".to_owned(),
+                relative_path: "docs/readme.txt".to_owned(),
+                provider_node_id: "remote-file-1".to_owned(),
+                offset: 2,
+                length: 8,
+            })
+        );
+    }
+
+    #[test]
+    fn read_planning_caps_at_eof() {
+        let (runtime, provider) = runtime_with_file();
+
+        assert_eq!(
+            runtime
+                .plan_read("promise-1", "docs/readme.txt", 10, 8)
+                .unwrap(),
+            ReadPlan::Request(ProviderReadPlan {
+                provider_id: provider,
+                promise_id: "promise-1".to_owned(),
+                relative_path: "docs/readme.txt".to_owned(),
+                provider_node_id: "remote-file-1".to_owned(),
+                offset: 10,
+                length: 2,
+            })
+        );
+        assert_eq!(
+            runtime
+                .plan_read("promise-1", "docs/readme.txt", 12, 8)
+                .unwrap(),
+            ReadPlan::Eof
+        );
+        assert_eq!(
+            runtime
+                .plan_read("promise-1", "docs/readme.txt", 0, 0)
+                .unwrap(),
+            ReadPlan::Eof
+        );
+    }
+
+    #[test]
+    fn read_planning_rejects_missing_or_non_file_nodes() {
+        let (runtime, _) = runtime_with_file();
+
+        assert_eq!(
+            runtime.plan_read("promise-1", "docs/missing.txt", 0, 1),
+            Err(Status::NotFound)
+        );
+        assert_eq!(
+            runtime.plan_read("promise-1", "docs", 0, 1),
+            Err(Status::InvalidArgument)
+        );
+        assert_eq!(
+            runtime.plan_read("missing-promise", "docs/readme.txt", 0, 1),
+            Err(Status::NotFound)
+        );
+    }
+
+    #[test]
+    fn read_planning_rejects_disconnected_provider() {
+        let (mut runtime, _) = runtime_with_file();
+
+        runtime
+            .unregister_provider(ProviderId::from_raw(1).unwrap())
+            .unwrap();
+
+        assert_eq!(
+            runtime.plan_read("promise-1", "docs/readme.txt", 0, 1),
+            Err(Status::ProviderGone)
+        );
+    }
+
+    #[test]
     fn validates_mode_and_directory_size() {
         let mut runtime = Runtime::new();
         let provider = runtime.register_provider();
@@ -536,5 +676,24 @@ mod tests {
             builder.add_dir("nonempty-dir", NodeAttr::new(0o755, 1, 0), "dir"),
             Err(Status::InvalidArgument)
         );
+    }
+
+    fn runtime_with_file() -> (Runtime, ProviderId) {
+        let mut runtime = Runtime::new();
+        let provider = runtime.register_provider();
+        let mut builder = PromiseBuilder::new(provider);
+        builder
+            .add_dir("docs", NodeAttr::new(0o755, 0, 0), "remote-dir-1")
+            .unwrap();
+        builder
+            .add_file(
+                "docs/readme.txt",
+                NodeAttr::new(0o644, 12, 0),
+                "remote-file-1",
+            )
+            .unwrap();
+        runtime.commit_promise(builder).unwrap();
+
+        (runtime, provider)
     }
 }

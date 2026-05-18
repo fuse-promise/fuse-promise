@@ -35,6 +35,8 @@ plugins, or application-specific integrations.
 - [x] `libfusepromise.so` provider registration uses private daemon IPC.
 - [x] Provider read requests received by `libfusepromise.so` dispatch to the
   public C read callback.
+- [x] Runtime read planning enforces provider ownership, file node type,
+  provider-gone state, and EOF capping.
 - [x] `fpctl status` queries the daemon when connected and falls back to
   `daemon=not-connected` when disconnected.
 - [x] `fp_promise_commit()` and `fp_materialize()` return
@@ -152,7 +154,7 @@ cargo test -p fuse-promise-ipc --locked
 - [ ] Route daemon read requests back to the provider process.
 - [x] Dispatch read requests to the provider's public C callback inside the
   provider process.
-- [ ] Enforce provider ownership for committed trees and read requests.
+- [x] Enforce provider ownership for committed trees and read requests.
 - [x] Mark non-materialized and non-cached promises as provider-gone when the
   provider disconnects.
 
