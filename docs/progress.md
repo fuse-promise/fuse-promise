@@ -33,6 +33,8 @@ plugins, or application-specific integrations.
 - [x] Private IPC has bounded provider read request/response message helpers.
 - [x] Private IPC propagates provider disconnect on provider connection close.
 - [x] `libfusepromise.so` provider registration uses private daemon IPC.
+- [x] Provider read requests received by `libfusepromise.so` dispatch to the
+  public C read callback.
 - [x] `fpctl status` queries the daemon when connected and falls back to
   `daemon=not-connected` when disconnected.
 - [x] `fp_promise_commit()` and `fp_materialize()` return
@@ -148,7 +150,7 @@ cargo test -p fuse-promise-ipc --locked
 - [x] Register providers through `libfusepromise.so` and private IPC.
 - [x] Keep a live provider session table in the daemon.
 - [ ] Route daemon read requests back to the provider process.
-- [ ] Dispatch read requests to the provider's public C callback inside the
+- [x] Dispatch read requests to the provider's public C callback inside the
   provider process.
 - [ ] Enforce provider ownership for committed trees and read requests.
 - [x] Mark non-materialized and non-cached promises as provider-gone when the

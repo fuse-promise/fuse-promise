@@ -129,7 +129,10 @@ disconnected and marks their available promises as provider-gone. Read routing
 and other IPC operations are still under development.
 
 `libfusepromise.so` provider registration uses this private daemon IPC and no
-longer creates authoritative provider sessions in a client-local runtime.
+longer creates authoritative provider sessions in a client-local runtime. Its
+provider helper thread dispatches private read requests to the registered
+public C callback and writes the private read response back over the provider
+connection.
 
 ## Lifecycle
 

@@ -377,6 +377,11 @@ The public library now registers providers through this private IPC. It may
 still keep builder metadata before commit, but it must not create a committed
 client-local Promise namespace.
 
+The public library also owns the provider-side callback dispatch loop. Private
+read requests received on the provider connection are converted into
+`fp_read_request_t` / `fp_read_response_t` calls inside the provider process.
+Daemon-originated FUSE read routing into that channel is still Phase 1 work.
+
 ## Failure Model
 
 The runtime must produce deterministic failures for:

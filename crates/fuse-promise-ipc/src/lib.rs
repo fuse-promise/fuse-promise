@@ -213,6 +213,25 @@ impl ProviderConnection {
         self.provider_id
     }
 
+    pub fn try_clone_stream(&self) -> io::Result<UnixStream> {
+        self.stream.try_clone()
+    }
+
+    pub fn shutdown(&self) -> io::Result<()> {
+        self.stream.shutdown(std::net::Shutdown::Both)
+    }
+
+    pub fn read_provider_read_request(&mut self) -> io::Result<Option<ProviderReadRequest>> {
+        read_provider_read_request(&mut self.stream)
+    }
+
+    pub fn write_provider_read_response(
+        &mut self,
+        response: &ProviderReadResponse,
+    ) -> io::Result<()> {
+        write_provider_read_response(&mut self.stream, response)
+    }
+
     pub fn unregister(mut self) -> io::Result<()> {
         write_frame(
             &mut self.stream,
@@ -226,6 +245,14 @@ impl ProviderConnection {
             _ => Err(invalid_data(
                 "daemon returned an unexpected provider unregister response",
             )),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn from_stream_for_test(stream: UnixStream, provider_id: u64) -> Self {
+        Self {
+            stream,
+            provider_id,
         }
     }
 }

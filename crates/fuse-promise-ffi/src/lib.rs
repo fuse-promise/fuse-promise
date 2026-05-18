@@ -1,17 +1,21 @@
 #![allow(non_camel_case_types)]
 
-use fuse_promise_ipc::{connect_provider, ProviderConnection};
+use fuse_promise_ipc::{
+    connect_provider, ProviderConnection, ProviderReadRequest, ProviderReadResponse,
+    ProviderReadStatus,
+};
 use fuse_promise_runtime::{
     default_control_socket_path, default_mount_path, validate_runtime_dir_path, NodeAttr,
     PromiseBuilder, ProviderId, Status, API_VERSION,
 };
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::io;
 use std::os::raw::{c_char, c_void};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 
 #[allow(non_camel_case_types)]
 pub type fp_status_t = u32;
@@ -94,9 +98,7 @@ pub struct fp_context {
 pub struct fp_provider {
     inner: Arc<ContextInner>,
     id: ProviderId,
-    connection: Option<ProviderConnection>,
-    _read: fp_provider_read_fn,
-    _user_data: *mut c_void,
+    helper: Option<ProviderHelper>,
 }
 
 pub struct fp_promise_builder {
@@ -108,6 +110,11 @@ pub enum fp_materialize_job {}
 struct ContextInner {
     socket_path: PathBuf,
     _mount_path: PathBuf,
+}
+
+struct ProviderHelper {
+    shutdown: std::os::unix::net::UnixStream,
+    thread: Option<JoinHandle<()>>,
 }
 
 #[no_mangle]
@@ -185,13 +192,12 @@ pub unsafe extern "C" fn fp_provider_register(
         let inner = (*context).inner.clone();
         let connection = connect_provider(&inner.socket_path).map_err(io_to_ffi)?;
         let id = ProviderId::from_raw(connection.provider_id()).ok_or(FP_ERR_IO)?;
+        let helper = spawn_provider_helper(connection, read, user_data)?;
 
         let provider = fp_provider {
             inner,
             id,
-            connection: Some(connection),
-            _read: read,
-            _user_data: user_data,
+            helper: Some(helper),
         };
 
         *out_provider = Box::into_raw(Box::new(provider));
@@ -206,8 +212,8 @@ pub unsafe extern "C" fn fp_provider_unregister(provider: *mut fp_provider) {
     }
 
     let mut provider = Box::from_raw(provider);
-    if let Some(connection) = provider.connection.take() {
-        let _ = connection.unregister();
+    if let Some(mut helper) = provider.helper.take() {
+        helper.shutdown();
     }
 }
 
@@ -340,6 +346,123 @@ fn ffi_guard(action: impl FnOnce() -> Result<fp_status_t, fp_status_t>) -> fp_st
         Ok(Ok(status)) => status,
         Ok(Err(status)) => status,
         Err(_) => FP_ERR_IO,
+    }
+}
+
+fn spawn_provider_helper(
+    mut connection: ProviderConnection,
+    read: fp_provider_read_fn,
+    user_data: *mut c_void,
+) -> Result<ProviderHelper, fp_status_t> {
+    let shutdown = connection.try_clone_stream().map_err(io_to_ffi)?;
+    let Some(read) = read else {
+        return Err(FP_ERR_INVALID_ARGUMENT);
+    };
+    let user_data = user_data as usize;
+    let thread = thread::Builder::new()
+        .name("fuse-promise-provider".to_owned())
+        .spawn(move || {
+            let user_data = user_data as *mut c_void;
+            while let Ok(Some(request)) = connection.read_provider_read_request() {
+                let response = dispatch_provider_read(&request, read, user_data);
+                if connection.write_provider_read_response(&response).is_err() {
+                    break;
+                }
+            }
+        })
+        .map_err(|_| FP_ERR_IO)?;
+
+    Ok(ProviderHelper {
+        shutdown,
+        thread: Some(thread),
+    })
+}
+
+impl ProviderHelper {
+    fn shutdown(&mut self) {
+        let _ = self.shutdown.shutdown(std::net::Shutdown::Both);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for ProviderHelper {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+fn dispatch_provider_read(
+    request: &ProviderReadRequest,
+    read: unsafe extern "C" fn(
+        request: *const fp_read_request_t,
+        response: *mut fp_read_response_t,
+        user_data: *mut c_void,
+    ) -> fp_status_t,
+    user_data: *mut c_void,
+) -> ProviderReadResponse {
+    let promise_id = match CString::new(request.promise_id.as_str()) {
+        Ok(value) => value,
+        Err(_) => {
+            return provider_read_error(request.request_id, ProviderReadStatus::InvalidArgument)
+        }
+    };
+    let node_id = match CString::new(request.provider_node_id.as_str()) {
+        Ok(value) => value,
+        Err(_) => {
+            return provider_read_error(request.request_id, ProviderReadStatus::InvalidArgument)
+        }
+    };
+    let relative_path = match CString::new(request.relative_path.as_str()) {
+        Ok(value) => value,
+        Err(_) => {
+            return provider_read_error(request.request_id, ProviderReadStatus::InvalidArgument)
+        }
+    };
+
+    let mut bytes = vec![0_u8; request.length as usize];
+    let c_request = fp_read_request_t {
+        promise_id: promise_id.as_ptr(),
+        node_id: node_id.as_ptr(),
+        relative_path: relative_path.as_ptr(),
+        offset: request.offset,
+        length: request.length as usize,
+    };
+    let mut c_response = fp_read_response_t {
+        buffer: bytes.as_mut_ptr(),
+        buffer_len: bytes.len(),
+        bytes_written: 0,
+    };
+
+    let status = match catch_unwind(AssertUnwindSafe(|| unsafe {
+        read(&c_request, &mut c_response, user_data)
+    })) {
+        Ok(status) => status,
+        Err(_) => FP_ERR_IO,
+    };
+
+    let status = provider_read_status_from_ffi(status);
+    if status != ProviderReadStatus::Ok {
+        return provider_read_error(request.request_id, status);
+    }
+    if c_response.bytes_written > c_response.buffer_len {
+        return provider_read_error(request.request_id, ProviderReadStatus::InvalidArgument);
+    }
+
+    bytes.truncate(c_response.bytes_written);
+    ProviderReadResponse {
+        request_id: request.request_id,
+        status: ProviderReadStatus::Ok,
+        bytes,
+    }
+}
+
+fn provider_read_error(request_id: u64, status: ProviderReadStatus) -> ProviderReadResponse {
+    ProviderReadResponse {
+        request_id,
+        status,
+        bytes: Vec::new(),
     }
 }
 
@@ -482,6 +605,20 @@ fn status_to_ffi(status: Status) -> fp_status_t {
     }
 }
 
+fn provider_read_status_from_ffi(status: fp_status_t) -> ProviderReadStatus {
+    match status {
+        FP_OK => ProviderReadStatus::Ok,
+        FP_ERR_INVALID_ARGUMENT | FP_ERR_VERSION_MISMATCH => ProviderReadStatus::InvalidArgument,
+        FP_ERR_PERMISSION => ProviderReadStatus::Permission,
+        FP_ERR_NOT_FOUND | FP_ERR_ALREADY_EXISTS => ProviderReadStatus::NotFound,
+        FP_ERR_PROVIDER_GONE | FP_ERR_UNAVAILABLE => ProviderReadStatus::ProviderGone,
+        FP_ERR_TIMEOUT => ProviderReadStatus::Timeout,
+        FP_ERR_CANCELLED => ProviderReadStatus::Cancelled,
+        FP_ERR_IO => ProviderReadStatus::Io,
+        _ => ProviderReadStatus::Io,
+    }
+}
+
 fn io_to_ffi(error: io::Error) -> fp_status_t {
     match error.kind() {
         io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => FP_ERR_VERSION_MISMATCH,
@@ -491,5 +628,86 @@ fn io_to_ffi(error: io::Error) -> fp_status_t {
         io::ErrorKind::PermissionDenied => FP_ERR_PERMISSION,
         io::ErrorKind::TimedOut => FP_ERR_TIMEOUT,
         _ => FP_ERR_IO,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fuse_promise_ipc::{read_provider_read_response, write_provider_read_request};
+    use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn dispatch_provider_read_calls_c_callback() {
+        let request = sample_read_request();
+
+        let response = dispatch_provider_read(&request, test_read_callback, std::ptr::null_mut());
+
+        assert_eq!(response.request_id, request.request_id);
+        assert_eq!(response.status, ProviderReadStatus::Ok);
+        assert_eq!(response.bytes, b"abc");
+    }
+
+    #[test]
+    fn provider_helper_dispatches_socket_read_requests() {
+        let (provider_stream, mut daemon_stream) = UnixStream::pair().unwrap();
+        let connection = ProviderConnection::from_stream_for_test(provider_stream, 1);
+        let mut helper =
+            spawn_provider_helper(connection, Some(test_read_callback), std::ptr::null_mut())
+                .unwrap();
+        let request = sample_read_request();
+
+        write_provider_read_request(&mut daemon_stream, &request).unwrap();
+        let response = read_provider_read_response(&mut daemon_stream)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(response.request_id, request.request_id);
+        assert_eq!(response.status, ProviderReadStatus::Ok);
+        assert_eq!(response.bytes, b"abc");
+
+        helper.shutdown();
+    }
+
+    fn sample_read_request() -> ProviderReadRequest {
+        ProviderReadRequest {
+            request_id: 42,
+            provider_id: 1,
+            promise_id: "promise-1".to_owned(),
+            relative_path: "docs/readme.txt".to_owned(),
+            provider_node_id: "remote-file-1".to_owned(),
+            offset: 7,
+            length: 8,
+        }
+    }
+
+    unsafe extern "C" fn test_read_callback(
+        request: *const fp_read_request_t,
+        response: *mut fp_read_response_t,
+        user_data: *mut c_void,
+    ) -> fp_status_t {
+        if request.is_null() || response.is_null() || !user_data.is_null() {
+            return FP_ERR_INVALID_ARGUMENT;
+        }
+
+        let request = &*request;
+        if CStr::from_ptr(request.promise_id).to_bytes() != b"promise-1"
+            || CStr::from_ptr(request.node_id).to_bytes() != b"remote-file-1"
+            || CStr::from_ptr(request.relative_path).to_bytes() != b"docs/readme.txt"
+            || request.offset != 7
+            || request.length != 8
+        {
+            return FP_ERR_INVALID_ARGUMENT;
+        }
+
+        let response = &mut *response;
+        let bytes = b"abc";
+        if response.buffer_len < bytes.len() || response.buffer.is_null() {
+            return FP_ERR_INVALID_ARGUMENT;
+        }
+
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), response.buffer, bytes.len());
+        response.bytes_written = bytes.len();
+        FP_OK
     }
 }
