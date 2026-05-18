@@ -1807,6 +1807,7 @@ fn read_materialize_chunk(
         fuse_promise_runtime::ReadPlan::Materialized(plan) => {
             read_local_materialized_chunk(&plan.path, plan.offset, plan.length)
         }
+        fuse_promise_runtime::ReadPlan::Cached(plan) => Ok(plan.bytes),
         fuse_promise_runtime::ReadPlan::Eof => Err(Status::Io),
     }
 }
@@ -2376,6 +2377,18 @@ mod tests {
         assert!(encoded.contains("cache_policy=no-cache\n"));
         assert!(encoded.contains("providers=2\n"));
         assert!(encoded.contains("promises=3\n"));
+    }
+
+    #[test]
+    fn status_reports_read_through_cache_policy() {
+        let runtime_dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        std::env::set_var("XDG_RUNTIME_DIR", runtime_dir.path());
+        let runtime = Runtime::with_cache_policy(CachePolicy::read_through(4096).unwrap()).unwrap();
+        let status = DaemonStatus::from_runtime(&runtime).unwrap();
+
+        assert_eq!(status.cache_policy, "read-through");
+        assert!(status.encode().contains("cache_policy=read-through\n"));
     }
 
     #[test]

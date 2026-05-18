@@ -278,6 +278,7 @@ provider disconnect, and provider-gone read failure:
 
 ```sh
 tests/read-only-mvp-smoke.sh
+tests/read-through-cache-smoke.sh
 ```
 
 ### G1.7 Read-Only MVP Gate
@@ -402,8 +403,8 @@ Goal: improve performance without changing visible Promise filesystem
 semantics.
 
 - [x] Keep default no-cache behavior explicit.
-- [ ] Add optional read-through chunk cache.
-- [ ] Track complete and incomplete byte ranges.
+- [x] Add optional read-through chunk cache.
+- [x] Track complete and incomplete byte ranges.
 - [ ] Add sequential prefetch.
 - [ ] Add read coalescing.
 - [x] Add materialized-file passthrough.
@@ -416,8 +417,10 @@ Acceptance:
 - Large tree creation remains metadata-only.
 - Materialize streams data without holding whole files in memory.
 - `fpctl status` reports `cache_policy=no-cache`.
-- Provider-gone reads succeed only for complete materialized content; cache
-  remains unimplemented.
+- `fpctl status` reports `cache_policy=read-through` when the daemon is started
+  with `--cache=read-through`.
+- Provider-gone reads succeed only for complete materialized content or complete
+  cached ranges in read-through mode.
 
 ## Phase 5: Stable System Component
 

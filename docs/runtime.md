@@ -155,8 +155,9 @@ provider read routing exists for the in-process IPC state. Real mounted FUSE
 read verification is covered by the smoke harness. File and directory subtree
 materialize IPC are implemented for fail-on-conflict behavior. Reads for
 materialized files can use the local materialized path after provider
-disconnect; overwrite and rename policies, progress, cancellation, and cache
-are still under development.
+disconnect. An opt-in read-through cache can satisfy fully cached ranges after
+provider disconnect; overwrite and rename policies, progress, cancellation,
+prefetch, and read coalescing are still under development.
 
 `libfusepromise.so` provider registration uses this private daemon IPC and no
 longer creates authoritative provider sessions in a client-local runtime. Its
@@ -210,6 +211,9 @@ Promise file opens use FUSE direct I/O so provider reads receive the caller's
 actual offset-based read ranges instead of kernel page-cache readahead ranges.
 If a file has been fully materialized, the runtime plans reads against the
 stored local materialized path before requiring a live provider.
+If read-through cache mode is enabled, the runtime may return a complete cached
+range before requiring a live provider. Cache misses keep the existing provider
+read path.
 
 Until a commit-ready FUSE namespace exists, public commit should return
 `FP_ERR_UNAVAILABLE`. Public materialize supports files and directory subtrees
@@ -272,6 +276,7 @@ The runtime should eventually expose:
 - Cache policy and usage.
 
 Observability should be available through `fpctl` and structured logs.
-`fpctl status` reports daemon, mount state, and `cache_policy=no-cache`.
+`fpctl status` reports daemon, mount state, and the active cache policy
+(`cache_policy=no-cache` by default, `cache_policy=read-through` when enabled).
 `fpctl list` reports daemon-owned providers, promises, and runtime nodes through
 private IPC.

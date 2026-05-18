@@ -7,6 +7,7 @@ use std::path::{Component, Path, PathBuf};
 
 pub const API_VERSION: u32 = 1;
 pub const FUSE_ROOT_INODE: u64 = 1;
+pub const DEFAULT_READ_THROUGH_CHUNK_SIZE: u32 = 256 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -114,12 +115,34 @@ pub enum PromiseState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CachePolicy {
     NoCache,
+    ReadThrough { chunk_size: u32 },
 }
 
 impl CachePolicy {
+    pub fn read_through(chunk_size: u32) -> Result<Self> {
+        Self::ReadThrough { chunk_size }.validated()
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             CachePolicy::NoCache => "no-cache",
+            CachePolicy::ReadThrough { .. } => "read-through",
+        }
+    }
+
+    pub const fn chunk_size(self) -> Option<u32> {
+        match self {
+            CachePolicy::NoCache => None,
+            CachePolicy::ReadThrough { chunk_size } if chunk_size > 0 => Some(chunk_size),
+            CachePolicy::ReadThrough { .. } => None,
+        }
+    }
+
+    fn validated(self) -> Result<Self> {
+        match self {
+            CachePolicy::NoCache => Ok(self),
+            CachePolicy::ReadThrough { chunk_size } if chunk_size > 0 => Ok(self),
+            CachePolicy::ReadThrough { .. } => Err(Status::InvalidArgument),
         }
     }
 }
@@ -150,6 +173,7 @@ pub struct PromiseTree {
 pub enum ReadPlan {
     Request(ProviderReadPlan),
     Materialized(MaterializedReadPlan),
+    Cached(CachedReadPlan),
     Eof,
 }
 
@@ -171,6 +195,11 @@ pub struct MaterializedReadPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedReadPlan {
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeEntry {
     MountRoot,
     PromiseNode {
@@ -184,6 +213,33 @@ pub struct DirectoryEntry {
     pub name: String,
     pub inode: u64,
     pub kind: NodeKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct CacheKey {
+    promise_id: String,
+    relative_path: String,
+}
+
+#[derive(Debug, Default)]
+struct ReadCache {
+    files: BTreeMap<CacheKey, CachedFile>,
+}
+
+#[derive(Debug, Default)]
+struct CachedFile {
+    chunks: BTreeMap<u64, CachedChunk>,
+}
+
+#[derive(Debug, Default)]
+struct CachedChunk {
+    ranges: Vec<CachedRange>,
+}
+
+#[derive(Debug)]
+struct CachedRange {
+    offset: u64,
+    bytes: Vec<u8>,
 }
 
 impl RuntimeEntry {
@@ -200,6 +256,170 @@ impl RuntimeEntry {
             RuntimeEntry::PromiseNode { node, .. } => node.kind,
         }
     }
+}
+
+impl ReadCache {
+    fn clear(&mut self) {
+        self.files.clear();
+    }
+
+    fn read(
+        &self,
+        promise_id: &str,
+        relative_path: &str,
+        offset: u64,
+        length: u64,
+        chunk_size: u32,
+    ) -> Option<Vec<u8>> {
+        let key = CacheKey {
+            promise_id: promise_id.to_owned(),
+            relative_path: relative_path.to_owned(),
+        };
+        self.files.get(&key)?.read(offset, length, chunk_size)
+    }
+
+    fn insert(
+        &mut self,
+        promise_id: &str,
+        relative_path: &str,
+        offset: u64,
+        bytes: &[u8],
+        chunk_size: u32,
+    ) {
+        let key = CacheKey {
+            promise_id: promise_id.to_owned(),
+            relative_path: relative_path.to_owned(),
+        };
+        self.files
+            .entry(key)
+            .or_default()
+            .insert(offset, bytes, chunk_size);
+    }
+}
+
+impl CachedFile {
+    fn read(&self, offset: u64, length: u64, chunk_size: u32) -> Option<Vec<u8>> {
+        let end = offset.checked_add(length)?;
+        let capacity = usize::try_from(length).ok()?;
+        let mut bytes = Vec::with_capacity(capacity);
+        let mut cursor = offset;
+        while cursor < end {
+            let chunk_base = chunk_base(cursor, chunk_size);
+            let chunk_end = chunk_base
+                .checked_add(u64::from(chunk_size))
+                .unwrap_or(u64::MAX);
+            let read_end = end.min(chunk_end);
+            let read_len = read_end.checked_sub(cursor)?;
+            let chunk = self.chunks.get(&chunk_base)?;
+            bytes.extend(chunk.read(cursor, read_len)?);
+            cursor = read_end;
+        }
+
+        Some(bytes)
+    }
+
+    fn insert(&mut self, offset: u64, bytes: &[u8], chunk_size: u32) {
+        let mut cursor = offset;
+        let mut consumed = 0;
+        while consumed < bytes.len() {
+            let chunk_base = chunk_base(cursor, chunk_size);
+            let chunk_end = chunk_base
+                .checked_add(u64::from(chunk_size))
+                .unwrap_or(u64::MAX);
+            let chunk_remaining = chunk_end.saturating_sub(cursor);
+            let take = bytes.len() - consumed;
+            let take = take.min(usize::try_from(chunk_remaining).unwrap_or(usize::MAX));
+            if take == 0 {
+                break;
+            }
+
+            self.chunks
+                .entry(chunk_base)
+                .or_default()
+                .insert(cursor, &bytes[consumed..consumed + take]);
+            consumed += take;
+            cursor = cursor.saturating_add(take as u64);
+        }
+    }
+}
+
+impl CachedChunk {
+    fn read(&self, offset: u64, length: u64) -> Option<Vec<u8>> {
+        let end = offset.checked_add(length)?;
+        for range in &self.ranges {
+            let range_end = range.end()?;
+            if range.offset <= offset && range_end >= end {
+                let start = usize::try_from(offset.checked_sub(range.offset)?).ok()?;
+                let end = usize::try_from(end.checked_sub(range.offset)?).ok()?;
+                return Some(range.bytes[start..end].to_vec());
+            }
+        }
+
+        None
+    }
+
+    fn insert(&mut self, offset: u64, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        let Some(new_end) = checked_range_end(offset, bytes.len()) else {
+            return;
+        };
+
+        let mut merged_offset = offset;
+        let mut merged_end = new_end;
+        let mut merged_bytes = bytes.to_vec();
+        let mut retained = Vec::new();
+
+        for range in self.ranges.drain(..) {
+            let Some(range_end) = range.end() else {
+                continue;
+            };
+            if range_end < merged_offset || range.offset > merged_end {
+                retained.push(range);
+                continue;
+            }
+
+            let next_offset = merged_offset.min(range.offset);
+            let next_end = merged_end.max(range_end);
+            let Some(next_len) = usize::try_from(next_end - next_offset).ok() else {
+                retained.push(range);
+                continue;
+            };
+            let mut next_bytes = vec![0_u8; next_len];
+            let old_start = usize::try_from(range.offset - next_offset).unwrap_or(0);
+            next_bytes[old_start..old_start + range.bytes.len()].copy_from_slice(&range.bytes);
+            let merged_start = usize::try_from(merged_offset - next_offset).unwrap_or(0);
+            next_bytes[merged_start..merged_start + merged_bytes.len()]
+                .copy_from_slice(&merged_bytes);
+            merged_offset = next_offset;
+            merged_end = next_end;
+            merged_bytes = next_bytes;
+        }
+
+        retained.push(CachedRange {
+            offset: merged_offset,
+            bytes: merged_bytes,
+        });
+        retained.sort_by_key(|range| range.offset);
+        self.ranges = retained;
+    }
+}
+
+impl CachedRange {
+    fn end(&self) -> Option<u64> {
+        checked_range_end(self.offset, self.bytes.len())
+    }
+}
+
+fn checked_range_end(offset: u64, length: usize) -> Option<u64> {
+    let length = u64::try_from(length).ok()?;
+    offset.checked_add(length)
+}
+
+fn chunk_base(offset: u64, chunk_size: u32) -> u64 {
+    let chunk_size = u64::from(chunk_size);
+    (offset / chunk_size) * chunk_size
 }
 
 impl PromiseTree {
@@ -381,6 +601,7 @@ pub struct Runtime {
     providers: BTreeMap<ProviderId, ProviderSession>,
     promises: BTreeMap<String, PromiseTree>,
     cache_policy: CachePolicy,
+    read_cache: ReadCache,
 }
 
 impl Default for Runtime {
@@ -399,11 +620,58 @@ impl Runtime {
             providers: BTreeMap::new(),
             promises: BTreeMap::new(),
             cache_policy: CachePolicy::NoCache,
+            read_cache: ReadCache::default(),
         }
+    }
+
+    pub fn with_cache_policy(cache_policy: CachePolicy) -> Result<Self> {
+        let mut runtime = Self::new();
+        runtime.set_cache_policy(cache_policy)?;
+        Ok(runtime)
     }
 
     pub fn cache_policy(&self) -> CachePolicy {
         self.cache_policy
+    }
+
+    pub fn set_cache_policy(&mut self, cache_policy: CachePolicy) -> Result<()> {
+        let cache_policy = cache_policy.validated()?;
+        self.cache_policy = cache_policy;
+        if cache_policy == CachePolicy::NoCache {
+            self.read_cache.clear();
+        }
+        Ok(())
+    }
+
+    pub fn record_cached_read(
+        &mut self,
+        promise_id: &str,
+        relative_path: &str,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<()> {
+        let Some(chunk_size) = self.cache_policy.chunk_size() else {
+            return Ok(());
+        };
+        if bytes.is_empty() {
+            return Ok(());
+        }
+
+        let tree = self.promise(promise_id).ok_or(Status::NotFound)?;
+        let node = tree.get(relative_path).ok_or(Status::NotFound)?;
+        if node.kind != NodeKind::File {
+            return Err(Status::InvalidArgument);
+        }
+        let length = u64::try_from(bytes.len()).map_err(|_| Status::InvalidArgument)?;
+        let end = offset.checked_add(length).ok_or(Status::InvalidArgument)?;
+        if end > node.attr.size {
+            return Err(Status::InvalidArgument);
+        }
+        let relative_path = node.relative_path.clone();
+
+        self.read_cache
+            .insert(promise_id, &relative_path, offset, bytes, chunk_size);
+        Ok(())
     }
 
     pub fn register_provider(&mut self) -> ProviderId {
@@ -591,6 +859,18 @@ impl Runtime {
                 offset,
                 length,
             }));
+        }
+
+        if let Some(chunk_size) = self.cache_policy.chunk_size() {
+            if let Some(bytes) = self.read_cache.read(
+                promise_id,
+                &node.relative_path,
+                offset,
+                u64::from(length),
+                chunk_size,
+            ) {
+                return Ok(ReadPlan::Cached(CachedReadPlan { bytes }));
+            }
         }
 
         if tree.state != PromiseState::Available {
@@ -836,6 +1116,13 @@ mod tests {
     fn runtime_defaults_to_explicit_no_cache_policy() {
         assert_eq!(Runtime::new().cache_policy(), CachePolicy::NoCache);
         assert_eq!(Runtime::default().cache_policy().as_str(), "no-cache");
+        assert_eq!(CachePolicy::read_through(0), Err(Status::InvalidArgument));
+        let mut runtime = Runtime::new();
+        assert_eq!(
+            runtime.set_cache_policy(CachePolicy::ReadThrough { chunk_size: 0 }),
+            Err(Status::InvalidArgument)
+        );
+        assert!(Runtime::with_cache_policy(CachePolicy::ReadThrough { chunk_size: 0 }).is_err());
     }
 
     #[test]
@@ -1126,6 +1413,77 @@ mod tests {
         assert_eq!(
             runtime.plan_read("promise-1", "docs/readme.txt", 0, 1),
             Err(Status::ProviderGone)
+        );
+    }
+
+    #[test]
+    fn read_through_cache_hit_survives_provider_disconnect() {
+        let (mut runtime, provider) = runtime_with_file();
+        runtime
+            .set_cache_policy(CachePolicy::read_through(4).unwrap())
+            .unwrap();
+        runtime
+            .record_cached_read("promise-1", "docs/readme.txt", 2, b"cdefgh")
+            .unwrap();
+
+        assert_eq!(
+            runtime
+                .plan_read("promise-1", "docs/readme.txt", 3, 4)
+                .unwrap(),
+            ReadPlan::Cached(CachedReadPlan {
+                bytes: b"defg".to_vec(),
+            })
+        );
+        assert_eq!(
+            runtime.plan_read("promise-1", "docs/readme.txt", 1, 4),
+            Ok(ReadPlan::Request(ProviderReadPlan {
+                provider_id: provider,
+                promise_id: "promise-1".to_owned(),
+                relative_path: "docs/readme.txt".to_owned(),
+                provider_node_id: "remote-file-1".to_owned(),
+                offset: 1,
+                length: 4,
+            }))
+        );
+
+        runtime.unregister_provider(provider).unwrap();
+        assert_eq!(
+            runtime
+                .plan_read("promise-1", "docs/readme.txt", 3, 4)
+                .unwrap(),
+            ReadPlan::Cached(CachedReadPlan {
+                bytes: b"defg".to_vec(),
+            })
+        );
+        assert_eq!(
+            runtime.plan_read("promise-1", "docs/readme.txt", 1, 4),
+            Err(Status::ProviderGone)
+        );
+    }
+
+    #[test]
+    fn materialized_read_plan_takes_priority_over_cache() {
+        let (mut runtime, _) = runtime_with_file();
+        let materialized_path = PathBuf::from("/tmp/fuse-promise-materialized/readme.txt");
+        runtime
+            .set_cache_policy(CachePolicy::read_through(4).unwrap())
+            .unwrap();
+        runtime
+            .record_cached_read("promise-1", "docs/readme.txt", 4, b"cached")
+            .unwrap();
+        runtime
+            .mark_node_materialized("promise-1", "docs/readme.txt", &materialized_path)
+            .unwrap();
+
+        assert_eq!(
+            runtime
+                .plan_read("promise-1", "docs/readme.txt", 4, 6)
+                .unwrap(),
+            ReadPlan::Materialized(MaterializedReadPlan {
+                path: materialized_path,
+                offset: 4,
+                length: 6,
+            })
         );
     }
 

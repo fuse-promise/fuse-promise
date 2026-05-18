@@ -24,17 +24,21 @@ connections. The daemon has a feature-gated FUSE mount lifecycle skeleton
 behind the `fuse-mount` feature; default builds report `fuse_adapter=disabled`
 until the libfuse3 development dependency is present. The feature-gated adapter
 now contains read-only `lookup`, `getattr`, `readdir`, `open`, `read`, and
-`release` callbacks over the daemon runtime and provider read routing. A real
-mounted committed-tree smoke is available as `tests/read-only-mvp-smoke.sh` and
-covers `fpctl status`, `fpctl list`, `find`, `ls`, `stat`, offset `dd`, `cat`,
-`cp`, file materialize, directory materialize, and provider-gone read errors.
+`release` callbacks over the daemon runtime and provider read routing. Real
+mounted committed-tree smokes are available as `tests/read-only-mvp-smoke.sh`
+and `tests/read-through-cache-smoke.sh`; they cover `fpctl status`,
+`fpctl list`, `find`, `ls`, `stat`, offset `dd`, `cat`, `cp`, file
+materialize, directory materialize, provider-gone read errors, and the optional
+read-through cache mode.
 File and directory subtree materialize are implemented for the
 fail-on-conflict policy; overwrite/rename policies, progress, cancellation,
-and cache remain under development. The runtime exposes the current
-`cache_policy=no-cache` decision through `fpctl status`; reads for completely
-materialized files can use the local materialized path after the provider
-disconnects. Private metadata commit is gated on commit readiness so disabled,
-unmounted, or mount-only daemon state cannot create invisible promises.
+sequential prefetch, and read coalescing remain under development. The runtime
+exposes `cache_policy=no-cache` by default through `fpctl status`; an opt-in
+daemon `--cache=read-through` mode stores complete read ranges in memory. Reads
+for completely materialized files can use the local materialized path after the
+provider disconnects. Private metadata commit is gated on commit readiness so
+disabled, unmounted, or mount-only daemon state cannot create invisible
+promises.
 `fp_promise_commit()` now routes through the daemon and can return a visible
 path only when the daemon reports a commit-ready FUSE namespace; default
 disabled or unmounted builds still return `FP_ERR_UNAVAILABLE`.
@@ -50,7 +54,7 @@ The first implementation target is a read-only Promise filesystem MVP:
 - Route reads to provider callbacks.
 
 Overwrite/rename conflict policies, progress reporting, cancellation,
-read-through cache policy, and distribution packaging remain later phases.
+prefetch/coalescing policy, and distribution packaging remain later phases.
 
 ## Why
 

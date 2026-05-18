@@ -38,6 +38,7 @@ enum FuseReadPlan {
         offset: u64,
         length: u32,
     },
+    Cached(Vec<u8>),
 }
 
 #[cfg(feature = "fuse-mount")]
@@ -187,13 +188,18 @@ impl fuser::Filesystem for PromiseFilesystem {
         };
 
         match read_plan {
-            FuseReadPlan::Provider(request) => match self.state.route_provider_read(request) {
-                Ok(response) if response.status == ProviderReadStatus::Ok => {
-                    reply.data(&response.bytes)
+            FuseReadPlan::Provider(request) => {
+                match self.state.route_provider_read(request.clone()) {
+                    Ok(response) if response.status == ProviderReadStatus::Ok => {
+                        match self.record_cached_read(&request, &response.bytes) {
+                            Ok(()) => reply.data(&response.bytes),
+                            Err(errno) => reply.error(errno),
+                        }
+                    }
+                    Ok(response) => reply.error(provider_status_to_errno(response.status)),
+                    Err(error) => reply.error(io_error_to_errno(&error)),
                 }
-                Ok(response) => reply.error(provider_status_to_errno(response.status)),
-                Err(error) => reply.error(io_error_to_errno(&error)),
-            },
+            }
             FuseReadPlan::Materialized {
                 path,
                 offset,
@@ -202,6 +208,7 @@ impl fuser::Filesystem for PromiseFilesystem {
                 Ok(bytes) => reply.data(&bytes),
                 Err(errno) => reply.error(errno),
             },
+            FuseReadPlan::Cached(bytes) => reply.data(&bytes),
         }
     }
 
@@ -275,7 +282,25 @@ impl PromiseFilesystem {
                 offset: plan.offset,
                 length: plan.length,
             })),
+            ReadPlan::Cached(plan) => Ok(Some(FuseReadPlan::Cached(plan.bytes))),
         }
+    }
+
+    fn record_cached_read(
+        &self,
+        request: &ProviderReadRequest,
+        bytes: &[u8],
+    ) -> Result<(), fuser::Errno> {
+        let runtime_state = self.state.runtime();
+        let mut runtime = runtime_state.lock().map_err(|_| fuser::Errno::EIO)?;
+        runtime
+            .record_cached_read(
+                &request.promise_id,
+                &request.relative_path,
+                request.offset,
+                bytes,
+            )
+            .map_err(status_to_errno)
     }
 }
 

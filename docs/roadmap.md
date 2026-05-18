@@ -56,6 +56,7 @@ For fixed implementation dependency and sequencing decisions, see
 
 - Make the default no-cache policy explicit.
 - Add optional chunk cache.
+- Track complete and incomplete cached byte ranges.
 - Add sequential prefetch policy.
 - Add read coalescing.
 - Add materialized-file passthrough.

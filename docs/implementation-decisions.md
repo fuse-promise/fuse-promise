@@ -355,9 +355,10 @@ profiling shows a real need.
 
 ## Cache Decision
 
-The first read-only MVP is no-cache. This is now an explicit runtime
+The first read-only MVP default is no-cache. This is an explicit runtime
 `CachePolicy::NoCache` value and is observable as `cache_policy=no-cache`
-through `fpctl status`.
+through `fpctl status`. The daemon can opt into an in-memory read-through cache
+with `--cache=read-through`; this does not add a public C ABI option.
 
 Later cache work must preserve visible Promise semantics:
 
@@ -365,10 +366,14 @@ Later cache work must preserve visible Promise semantics:
 - Partial cache is not enough to survive provider disconnect unless the
   requested range is fully cached.
 - Complete materialized content may satisfy future reads.
-- Cache policy must be observable through `fpctl`. Implemented for the current
-  no-cache default.
+- Complete cached ranges may satisfy future reads when read-through cache mode
+  is enabled.
+- Cache policy must be observable through `fpctl`.
 - The default remains no-cache: provider-gone reads succeed only for complete
-  materialized files until cache policy exists.
+  materialized files unless read-through cache mode has a complete requested
+  range.
+- Materialize may consume cached ranges through the normal read planner but
+  does not actively populate the read-through cache.
 
 Do not add cache dependencies until the no-cache read and materialize paths are
 correct.
