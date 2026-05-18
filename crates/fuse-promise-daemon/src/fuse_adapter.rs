@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "fuse-mount")]
 pub struct FuseMount {
-    _session: fuser::BackgroundSession,
+    session: Option<fuser::BackgroundSession>,
 }
 
 #[cfg(not(feature = "fuse-mount"))]
@@ -273,7 +273,9 @@ pub fn start(mount_path: &Path, state: IpcState) -> io::Result<Option<FuseMount>
         next_read_request_id: AtomicU64::new(1),
     };
     let session = fuser::spawn_mount2(filesystem, mount_path, &config)?;
-    Ok(Some(FuseMount { _session: session }))
+    Ok(Some(FuseMount {
+        session: Some(session),
+    }))
 }
 
 #[cfg(not(feature = "fuse-mount"))]
@@ -297,6 +299,15 @@ fn disabled_mount_status(_mount_path: PathBuf) -> IpcMountStatus {
 #[cfg(not(feature = "fuse-mount"))]
 fn disabled_mount_status(mount_path: PathBuf) -> IpcMountStatus {
     IpcMountStatus::disabled(mount_path)
+}
+
+#[cfg(feature = "fuse-mount")]
+impl Drop for FuseMount {
+    fn drop(&mut self) {
+        if let Some(session) = self.session.take() {
+            let _ = session.umount_and_join();
+        }
+    }
 }
 
 #[cfg(feature = "fuse-mount")]

@@ -196,7 +196,7 @@ Acceptance:
 - [~] Mount `$XDG_RUNTIME_DIR/fuse-promise/`.
 - [x] Fail explicitly if `XDG_RUNTIME_DIR` is missing, not absolute, unsafe, or
   not owned by the current user.
-- [~] Cleanly unmount on daemon exit.
+- [x] Cleanly unmount on daemon exit.
 - [x] Keep mount lifecycle user-session scoped.
 
 Acceptance:
