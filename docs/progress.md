@@ -441,7 +441,7 @@ stable ABI.
 - [x] Validate control socket ownership and type.
 - [ ] Validate provider ownership for all daemon mutations.
 - [ ] Validate paths and prevent path traversal.
-- [ ] Validate materialize targets and symlink behavior.
+- [x] Validate materialize targets and symlink behavior.
 - [ ] Validate read ranges and message sizes.
 
 Suggested verification:
@@ -449,6 +449,7 @@ Suggested verification:
 ```sh
 cargo test -p fuse-promise-ipc --locked
 tests/control-socket-security.sh
+tests/materialize-security.sh
 ```
 
 ### G5.2 Compatibility Matrix

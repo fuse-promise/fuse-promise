@@ -62,9 +62,10 @@ traversal, NUL-containing paths, duplicate nodes, missing parents, and invalid
 node metadata are rejected before daemon state mutates.
 
 Materialize uses the same provider read path as lazy filesystem reads. The
-current fail-on-conflict policy rejects existing targets during preflight and
-tracks created target identity during cleanup so later failures do not remove
-unrelated files.
+current fail-on-conflict policy rejects symlink target directories and existing
+targets, including existing symlink targets, during preflight. Created target
+identity is tracked during cleanup so later failures do not remove unrelated
+files.
 
 ## Non-Goals
 

@@ -350,7 +350,7 @@ pub unsafe extern "C" fn fp_materialize(
         }
         let context = &*context;
         let promise_path = absolute_client_path(cstr_to_str(promise_path)?).map_err(io_to_ffi)?;
-        let target_dir = canonical_target_dir(cstr_to_str(target_dir)?)?;
+        let target_dir = checked_target_dir(cstr_to_str(target_dir)?)?;
         let conflict_policy = materialize_options(options)?;
 
         materialize_file(
@@ -578,12 +578,18 @@ fn absolute_client_path(path: &str) -> io::Result<PathBuf> {
     }
 }
 
-fn canonical_target_dir(path: &str) -> Result<PathBuf, fp_status_t> {
-    let path = fs::canonicalize(path).map_err(io_to_ffi)?;
-    if path.is_dir() {
-        Ok(path)
+fn checked_target_dir(path: &str) -> Result<PathBuf, fp_status_t> {
+    let path = PathBuf::from(path);
+    let path = if path.is_absolute() {
+        path
     } else {
+        std::env::current_dir().map_err(io_to_ffi)?.join(path)
+    };
+    let metadata = fs::symlink_metadata(&path).map_err(io_to_ffi)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
         Err(FP_ERR_INVALID_ARGUMENT)
+    } else {
+        Ok(path)
     }
 }
 

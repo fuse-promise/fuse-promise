@@ -72,7 +72,7 @@ fn materialize(promise_path: &str, target_dir: &str) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let target_dir = match canonical_target_dir(target_dir) {
+    let target_dir = match checked_target_dir(target_dir) {
         Ok(path) => path,
         Err(error) => {
             eprintln!("fpctl: {error}");
@@ -129,15 +129,27 @@ fn absolute_client_path(path: &str) -> io::Result<PathBuf> {
     }
 }
 
-fn canonical_target_dir(path: &str) -> io::Result<PathBuf> {
-    let path = fs::canonicalize(path)?;
-    if path.is_dir() {
-        Ok(path)
+fn checked_target_dir(path: &str) -> io::Result<PathBuf> {
+    let path = PathBuf::from(path);
+    let path = if path.is_absolute() {
+        path
     } else {
+        env::current_dir()?.join(path)
+    };
+    let metadata = fs::symlink_metadata(&path)?;
+    if metadata.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "target directory must not be a symlink",
+        ));
+    }
+    if !metadata.is_dir() {
         Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "target directory is not a directory",
         ))
+    } else {
+        Ok(path)
     }
 }
 

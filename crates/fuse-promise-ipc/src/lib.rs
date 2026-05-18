@@ -1627,11 +1627,11 @@ fn validate_target_dir(target_dir: &Path) -> std::result::Result<(), Status> {
     if !target_dir.is_absolute() {
         return Err(Status::InvalidArgument);
     }
-    let metadata = fs::metadata(target_dir).map_err(|error| io_error_to_status(&error))?;
-    if metadata.is_dir() {
-        Ok(())
-    } else {
+    let metadata = fs::symlink_metadata(target_dir).map_err(|error| io_error_to_status(&error))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
         Err(Status::InvalidArgument)
+    } else {
+        Ok(())
     }
 }
 
@@ -2382,6 +2382,7 @@ mod tests {
     use fuse_promise_runtime::{PromiseState, ProviderState};
     use std::io::Cursor;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::{Mutex as TestMutex, MutexGuard as TestMutexGuard, OnceLock};
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -2409,6 +2410,7 @@ mod tests {
 
     #[test]
     fn status_reports_read_through_cache_policy() {
+        let _env_lock = xdg_runtime_env_lock();
         let runtime_dir = tempfile::tempdir().unwrap();
         fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
         std::env::set_var("XDG_RUNTIME_DIR", runtime_dir.path());
@@ -2452,6 +2454,7 @@ mod tests {
 
     #[test]
     fn client_and_server_negotiate_status() {
+        let _env_lock = xdg_runtime_env_lock();
         let runtime_dir = tempfile::tempdir().unwrap();
         fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
         std::env::set_var("XDG_RUNTIME_DIR", runtime_dir.path());
@@ -2497,6 +2500,7 @@ mod tests {
 
     #[test]
     fn status_uses_shared_mount_state() {
+        let _env_lock = xdg_runtime_env_lock();
         let runtime_dir = tempfile::tempdir().unwrap();
         fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
         std::env::set_var("XDG_RUNTIME_DIR", runtime_dir.path());
@@ -3369,6 +3373,11 @@ mod tests {
             "fuse-promise-ipc-{}-{nanos}.sock",
             std::process::id()
         ))
+    }
+
+    fn xdg_runtime_env_lock() -> TestMutexGuard<'static, ()> {
+        static LOCK: OnceLock<TestMutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| TestMutex::new(())).lock().unwrap()
     }
 
     fn sample_commit_request(provider_id: u64) -> PromiseCommitRequest {
