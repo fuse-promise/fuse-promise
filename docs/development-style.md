@@ -138,6 +138,13 @@ The CLI should call the same public or internal runtime paths as real users. It 
 
 Tests should cover behavior visible through both the public ABI and the mounted filesystem.
 
+High-level behavior tests belong in repository-level `tests/` scripts or
+crate-level `tests/` integration tests. In-source Rust `#[cfg(test)]` modules
+should be reserved for private helper invariants and narrow unit behavior that
+cannot be exercised cleanly through the public C ABI, daemon, CLI, or mounted
+filesystem harnesses. Scenario fixtures with long fixed strings should live in
+`tests/` rather than in crate source files.
+
 Important test areas:
 
 - Metadata-only tree commit.

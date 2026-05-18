@@ -13,7 +13,6 @@ extern "C" {
 typedef struct fp_context fp_context_t;
 typedef struct fp_provider fp_provider_t;
 typedef struct fp_promise_builder fp_promise_builder_t;
-typedef struct fp_materialize_job fp_materialize_job_t;
 
 typedef uint32_t fp_status_t;
 

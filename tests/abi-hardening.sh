@@ -4,6 +4,7 @@ set -euo pipefail
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 cc_bin=${CC:-cc}
+cxx_bin=${CXX:-c++}
 pkg_config_bin=${PKG_CONFIG:-pkg-config}
 nm_bin=${NM:-nm}
 readelf_bin=${READELF:-readelf}
@@ -15,6 +16,7 @@ fail() {
 
 command -v cargo >/dev/null || fail "cargo is required"
 command -v "$cc_bin" >/dev/null || fail "cc is required"
+command -v "$cxx_bin" >/dev/null || fail "c++ is required"
 command -v "$pkg_config_bin" >/dev/null || fail "pkg-config is required"
 command -v "$nm_bin" >/dev/null || fail "nm is required"
 command -v "$readelf_bin" >/dev/null || fail "readelf is required"
@@ -81,6 +83,18 @@ pkg_flags=$("$pkg_config_bin" --cflags --libs fuse-promise)
     -o "$work_dir/abi_public_surface"
 LD_LIBRARY_PATH="$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
     "$work_dir/abi_public_surface"
+
+cat > "$work_dir/header.cc" <<'CPP'
+#include <fuse-promise/fuse-promise.h>
+
+static_assert(FP_API_VERSION == 1u, "FP_API_VERSION changed");
+
+int main() {
+    return 0;
+}
+CPP
+"$cxx_bin" -std=c++17 -Wall -Wextra -Werror -I"$prefix/include" \
+    -fsyntax-only "$work_dir/header.cc"
 
 for example in examples/minimal_provider.c examples/materialize.c; do
     if grep -Eq '#include[[:space:]]+"' "$example"; then

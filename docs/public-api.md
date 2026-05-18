@@ -42,7 +42,6 @@ Opaque handles:
 typedef struct fp_context fp_context_t;
 typedef struct fp_provider fp_provider_t;
 typedef struct fp_promise_builder fp_promise_builder_t;
-typedef struct fp_materialize_job fp_materialize_job_t;
 ```
 
 Status values:
@@ -95,13 +94,15 @@ Filesystem errno mappings used by FUSE callbacks:
 
 When a provider connection closes, daemon-owned promises that still depend on
 that provider are marked provider-gone unless they are completely materialized
-or can be satisfied by a future cache policy. Reads and materialize operations
-for provider-gone promises fail deterministically with `FP_ERR_PROVIDER_GONE`
-through the public C ABI and `EIO` through FUSE reads.
+or the requested range is fully covered by the read-through cache policy.
+Reads and materialize operations for provider-gone promises fail
+deterministically with `FP_ERR_PROVIDER_GONE` through the public C ABI and
+`EIO` through FUSE reads.
 
 ## API Sketch
 
-This API is an initial implementation surface, not a frozen stable ABI.
+This API is the current developer-preview surface. It is tested as an ABI, but
+it is not declared stable until the first stable ABI release gate is complete.
 
 ```c
 typedef struct fp_context_options {
@@ -166,8 +167,8 @@ The current implementation registers providers with `fuse-promised` through
 private daemon IPC. If the daemon is unavailable, provider registration returns
 `FP_ERR_UNAVAILABLE`. Provider read requests received on the private provider
 connection are dispatched to the registered public C callback. Daemon-side read
-routing and feature-gated FUSE callbacks exist; real mounted FUSE read
-verification remains outstanding.
+routing and feature-gated FUSE callbacks are covered by the mounted smoke
+harness.
 
 Promise creation:
 

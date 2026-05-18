@@ -8,7 +8,8 @@ The project is a system component. It is not a clipboard application, a cloud cl
 
 ## Status
 
-This repository is in the early implementation phase.
+This repository has implemented the read-only Promise filesystem MVP and the
+current developer-preview materialize/cache path.
 
 The current tree contains the public C header, Rust workspace skeleton, core
 Promise metadata model, C ABI entry points, initial daemon and CLI entry
@@ -48,14 +49,15 @@ disabled or unmounted builds still return `FP_ERR_UNAVAILABLE`.
 invalid-argument behavior, generated pkg-config metadata, and public C example
 linking.
 
-The first implementation target is a read-only Promise filesystem MVP:
+The completed read-only Promise filesystem MVP supports:
 
 - Commit metadata-only file and directory trees.
 - Expose them under a user-session FUSE mount.
 - Support `stat`, `readdir`, `open`, and offset-based `read`.
 - Route reads to provider callbacks.
 
-Final stable ABI release preparation remains a later phase.
+Final stable ABI release preparation is tracked separately and remains the
+current release-readiness gate.
 
 ## Why
 

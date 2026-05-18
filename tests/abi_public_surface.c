@@ -227,6 +227,24 @@ int main(void) {
     CHECK(fp_materialize(NULL, "/missing", runtime_dir, NULL) ==
           FP_ERR_INVALID_ARGUMENT);
 
+    fp_provider_t *provider = NULL;
+    fp_provider_ops_t bad_provider_ops = provider_ops;
+    bad_provider_ops.struct_size = 0;
+    CHECK(fp_provider_register(context, &bad_provider_ops, NULL, &provider) ==
+          FP_ERR_INVALID_ARGUMENT);
+    CHECK(provider == NULL);
+
+    fp_materialize_options_t bad_materialize_options = materialize_options;
+    bad_materialize_options.struct_size = 0;
+    CHECK(fp_materialize(context, "/missing", runtime_dir,
+                         &bad_materialize_options) ==
+          FP_ERR_INVALID_ARGUMENT);
+
+    fp_materialize_options_t bad_materialize_policy = materialize_options;
+    bad_materialize_policy.conflict_policy = 999u;
+    CHECK(fp_materialize(context, "/missing", runtime_dir,
+                         &bad_materialize_policy) == FP_ERR_INVALID_ARGUMENT);
+
     fp_provider_unregister(NULL);
     fp_promise_builder_free(NULL);
     fp_context_close(NULL);

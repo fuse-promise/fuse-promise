@@ -11,7 +11,7 @@ The stable release candidate must freeze:
 
 - `include/fuse-promise/fuse-promise.h`
 - exported `fp_` symbols from `libfusepromise.so`
-- `libfusepromise.so.0` soname policy
+- `libfusepromise.so.<stable-major>` soname policy
 - generated `fuse-promise.pc`
 - documented `fp_status_t` values
 - documented `fp_conflict_policy_t` values
@@ -51,14 +51,25 @@ The FUSE gates require libfuse3 development metadata, `/dev/fuse`, and
 
 The first stable ABI release remains blocked until these are resolved:
 
-- Decide whether the implemented materialize conflict policies are stable
-  public ABI commitments.
-- Decide whether the progress callback and progress-callback cancellation are
-  stable public ABI commitments.
-- Reconcile `CHANGELOG.md` with the chosen stability statement.
+- Decide whether the current developer-preview materialize conflict policies,
+  progress callback, and progress-callback cancellation are final stable public
+  ABI commitments.
+- Choose the stable soname major before tagging the first stable ABI release.
+- Reconcile `CHANGELOG.md` and release notes with the chosen stability
+  statement.
 - Re-run ABI hardening against the exact release build artifact.
 - Tag the release only after the installed header, pkg-config metadata, soname,
   CLI behavior, and smoke gates match this document.
+
+## Current Preview Surface Decisions
+
+- The public header exposes only handles and structs used by callable public
+  functions; unused future job handles are not part of the developer-preview
+  ABI surface.
+- `FP_CONFLICT_FAIL`, `FP_CONFLICT_OVERWRITE`, `FP_CONFLICT_RENAME`,
+  `fp_materialize_progress_t`, and progress-callback cancellation are covered
+  by ABI and smoke tests, but remain developer-preview commitments until the
+  stable release gate explicitly freezes them.
 
 ## Versioning Rule
 

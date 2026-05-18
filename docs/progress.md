@@ -221,9 +221,9 @@ Acceptance:
 - [x] Validate node type, permission bits, file size, mtime, duplicate paths,
   and parent directories.
 - [x] Commit static snapshot Promise trees.
-- [~] Return a visible path under `$XDG_RUNTIME_DIR/fuse-promise/`; the public
-  ABI success path is covered against a commit-ready daemon state, while real
-  mounted-path verification remains part of G1.5.
+- [x] Return a visible path under `$XDG_RUNTIME_DIR/fuse-promise/`; the public
+  ABI success path is covered against a commit-ready daemon state and the real
+  mounted path is covered by the FUSE smoke harness.
 
 Acceptance:
 
@@ -481,7 +481,8 @@ Acceptance:
   user service.
 - [x] Provide distribution packaging guidelines.
 - [x] Provide build instructions.
-- [x] Provide changelog and release notes.
+- [x] Provide changelog.
+- [~] Prepare stable release notes.
 - [x] Document visible filesystem layout.
 - [~] Prepare first stable ABI release.
 

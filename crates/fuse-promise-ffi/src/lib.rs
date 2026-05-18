@@ -134,8 +134,6 @@ pub struct fp_promise_builder {
     builder: Mutex<Option<PromiseBuilder>>,
 }
 
-pub enum fp_materialize_job {}
-
 struct MaterializeOptions {
     conflict_policy: MaterializeConflictPolicy,
     progress: fp_materialize_progress_fn,

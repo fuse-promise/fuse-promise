@@ -27,8 +27,8 @@ application-specific integrations.
 - Logging: `tracing` and `tracing-subscriber`.
 - Internal errors: `thiserror`.
 - Tests: `tempfile` for isolated runtime directories and filesystem tests.
-- Packaging: keep the public header hand-maintained for now; generate install
-  metadata later from existing templates.
+- Packaging: keep the public header hand-maintained; generate install metadata
+  from the existing templates.
 
 ## Architecture Lock
 
@@ -364,7 +364,7 @@ with `--cache=read-through`; this does not add a public C ABI option. In this
 mode, the daemon coalesces provider reads to cache chunks and performs
 synchronous one-range sequential prefetch after a full provider read.
 
-Later cache work must preserve visible Promise semantics:
+The implemented cache work must preserve visible Promise semantics:
 
 - Random reads must not force full-file download.
 - Partial cache is not enough to survive provider disconnect unless the
