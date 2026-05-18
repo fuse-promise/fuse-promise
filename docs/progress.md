@@ -439,7 +439,7 @@ stable ABI.
 - [x] Document user-session isolation.
 - [x] Validate `XDG_RUNTIME_DIR` ownership and permissions.
 - [x] Validate control socket ownership and type.
-- [ ] Validate provider ownership for all daemon mutations.
+- [x] Validate provider ownership for all daemon mutations.
 - [ ] Validate paths and prevent path traversal.
 - [x] Validate materialize targets and symlink behavior.
 - [ ] Validate read ranges and message sizes.
@@ -450,6 +450,7 @@ Suggested verification:
 cargo test -p fuse-promise-ipc --locked
 tests/control-socket-security.sh
 tests/materialize-security.sh
+tests/read-only-mvp-smoke.sh
 ```
 
 ### G5.2 Compatibility Matrix

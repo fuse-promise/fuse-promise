@@ -100,11 +100,13 @@ pub struct fp_context {
 pub struct fp_provider {
     inner: Arc<ContextInner>,
     id: ProviderId,
+    owner_token: u128,
     helper: Option<ProviderHelper>,
 }
 
 pub struct fp_promise_builder {
     inner: Arc<ContextInner>,
+    provider_owner_token: u128,
     builder: Mutex<Option<PromiseBuilder>>,
 }
 
@@ -195,11 +197,13 @@ pub unsafe extern "C" fn fp_provider_register(
         let inner = (*context).inner.clone();
         let connection = connect_provider(&inner.socket_path).map_err(io_to_ffi)?;
         let id = ProviderId::from_raw(connection.provider_id()).ok_or(FP_ERR_IO)?;
+        let owner_token = connection.provider_owner_token();
         let helper = spawn_provider_helper(connection, read, user_data)?;
 
         let provider = fp_provider {
             inner,
             id,
+            owner_token,
             helper: Some(helper),
         };
 
@@ -237,9 +241,11 @@ pub unsafe extern "C" fn fp_promise_builder_new(
         }
 
         let provider_id = (*provider).id;
+        let provider_owner_token = (*provider).owner_token;
 
         let builder = fp_promise_builder {
             inner: (*context).inner.clone(),
+            provider_owner_token,
             builder: Mutex::new(Some(PromiseBuilder::new(provider_id))),
         };
 
@@ -320,7 +326,10 @@ pub unsafe extern "C" fn fp_promise_commit(
             return Err(FP_ERR_INVALID_ARGUMENT);
         };
 
-        let request = PromiseCommitRequest::from_builder(inner_builder);
+        let request = PromiseCommitRequest::from_builder_with_owner_token(
+            inner_builder,
+            builder.provider_owner_token,
+        );
         let response = commit_promise(&builder.inner.socket_path, request).map_err(io_to_ffi)?;
         let visible_path = response.visible_path.to_string_lossy();
         write_c_string(out_path, out_path_len, visible_path.as_ref())?;
@@ -937,6 +946,7 @@ mod tests {
         });
         let mut builder = fp_promise_builder {
             inner,
+            provider_owner_token: 1,
             builder: Mutex::new(Some(pending_builder)),
         };
         let mut out_path = [1_i8; 512];

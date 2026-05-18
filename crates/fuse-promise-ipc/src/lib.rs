@@ -170,6 +170,7 @@ enum Request {
     ProviderRegister,
     ProviderUnregister {
         provider_id: u64,
+        provider_owner_token: u128,
     },
     PromiseCommit(PromiseCommitBody),
     Materialize(MaterializeBody),
@@ -186,6 +187,7 @@ enum Response {
     Inspect(InspectBody),
     ProviderRegistered {
         provider_id: u64,
+        provider_owner_token: u128,
     },
     ProviderUnregistered,
     PromiseCommitted(PromiseCommittedBody),
@@ -235,6 +237,7 @@ struct InspectNodeBody {
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
 struct PromiseCommitBody {
     provider_id: u64,
+    provider_owner_token: u128,
     nodes: Vec<PromiseNodeBody>,
 }
 
@@ -437,17 +440,23 @@ enum ErrorCode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderRegistration {
     pub provider_id: u64,
+    pub provider_owner_token: u128,
 }
 
 #[derive(Debug)]
 pub struct ProviderConnection {
     stream: UnixStream,
     provider_id: u64,
+    provider_owner_token: u128,
 }
 
 impl ProviderConnection {
     pub fn provider_id(&self) -> u64 {
         self.provider_id
+    }
+
+    pub fn provider_owner_token(&self) -> u128 {
+        self.provider_owner_token
     }
 
     pub fn try_clone_stream(&self) -> io::Result<UnixStream> {
@@ -474,6 +483,7 @@ impl ProviderConnection {
             &mut self.stream,
             &Request::ProviderUnregister {
                 provider_id: self.provider_id,
+                provider_owner_token: self.provider_owner_token,
             },
         )?;
         match read_response(&mut self.stream)? {
@@ -490,6 +500,7 @@ impl ProviderConnection {
         Self {
             stream,
             provider_id,
+            provider_owner_token: 1,
         }
     }
 }
@@ -497,6 +508,7 @@ impl ProviderConnection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromiseCommitRequest {
     pub provider_id: u64,
+    pub provider_owner_token: u128,
     pub nodes: Vec<PromiseNodeSpec>,
 }
 
@@ -579,6 +591,7 @@ pub struct IpcState {
 #[derive(Clone)]
 struct ProviderRoute {
     writer: Arc<Mutex<UnixStream>>,
+    owner_token: u128,
 }
 
 struct PendingRead {
@@ -689,15 +702,50 @@ impl IpcState {
         self.next_read_request_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    fn register_provider_route(&self, provider_id: u64, stream: &UnixStream) -> io::Result<()> {
+    fn register_provider_route(
+        &self,
+        provider_id: u64,
+        owner_token: u128,
+        stream: &UnixStream,
+    ) -> io::Result<()> {
         let route = ProviderRoute {
             writer: Arc::new(Mutex::new(stream.try_clone()?)),
+            owner_token,
         };
         self.provider_routes
             .lock()
             .map_err(|_| io::Error::other("provider route lock poisoned"))?
             .insert(provider_id, route);
         Ok(())
+    }
+
+    fn validate_provider_owner(
+        &self,
+        provider_id: fuse_promise_runtime::ProviderId,
+        owner_token: u128,
+    ) -> io::Result<std::result::Result<(), Status>> {
+        let routes = self
+            .provider_routes
+            .lock()
+            .map_err(|_| io::Error::other("provider route lock poisoned"))?;
+        if let Some(route) = routes.get(&provider_id.raw()) {
+            return if route.owner_token == owner_token {
+                Ok(Ok(()))
+            } else {
+                Ok(Err(Status::Permission))
+            };
+        }
+        drop(routes);
+
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| io::Error::other("runtime lock poisoned"))?;
+        if runtime.provider(provider_id).is_some() {
+            Ok(Err(Status::ProviderGone))
+        } else {
+            Ok(Err(Status::NotFound))
+        }
     }
 
     fn complete_provider_read(
@@ -831,6 +879,7 @@ pub fn register_provider(socket_path: &Path) -> io::Result<ProviderRegistration>
     let connection = connect_provider(socket_path)?;
     Ok(ProviderRegistration {
         provider_id: connection.provider_id(),
+        provider_owner_token: connection.provider_owner_token(),
     })
 }
 
@@ -839,9 +888,13 @@ pub fn connect_provider(socket_path: &Path) -> io::Result<ProviderConnection> {
 
     write_frame(&mut stream, &Request::ProviderRegister)?;
     match read_response(&mut stream)? {
-        Response::ProviderRegistered { provider_id } => Ok(ProviderConnection {
+        Response::ProviderRegistered {
+            provider_id,
+            provider_owner_token,
+        } => Ok(ProviderConnection {
             stream,
             provider_id,
+            provider_owner_token,
         }),
         Response::Error(error) => Err(error_to_io(error)),
         _ => Err(invalid_data(
@@ -850,10 +903,20 @@ pub fn connect_provider(socket_path: &Path) -> io::Result<ProviderConnection> {
     }
 }
 
-pub fn unregister_provider(socket_path: &Path, provider_id: u64) -> io::Result<()> {
+pub fn unregister_provider(
+    socket_path: &Path,
+    provider_id: u64,
+    provider_owner_token: u128,
+) -> io::Result<()> {
     let mut stream = connect_and_hello(socket_path)?;
 
-    write_frame(&mut stream, &Request::ProviderUnregister { provider_id })?;
+    write_frame(
+        &mut stream,
+        &Request::ProviderUnregister {
+            provider_id,
+            provider_owner_token,
+        },
+    )?;
     match read_response(&mut stream)? {
         Response::ProviderUnregistered => Ok(()),
         Response::Error(error) => Err(error_to_io(error)),
@@ -1108,12 +1171,14 @@ fn handle_client_requests(
                     .map_err(|_| io::Error::other("runtime lock poisoned"))?;
                 let provider_id = runtime.register_provider();
                 drop(runtime);
-                state.register_provider_route(provider_id.raw(), stream)?;
+                let provider_owner_token = generate_provider_owner_token()?;
+                state.register_provider_route(provider_id.raw(), provider_owner_token, stream)?;
                 registered_providers.push(provider_id);
                 write_frame(
                     stream,
                     &Response::ProviderRegistered {
                         provider_id: provider_id.raw(),
+                        provider_owner_token,
                     },
                 )?;
             }
@@ -1124,7 +1189,10 @@ fn handle_client_requests(
                     "client must send hello before provider register",
                 )?;
             }
-            Request::ProviderUnregister { provider_id } if negotiated => {
+            Request::ProviderUnregister {
+                provider_id,
+                provider_owner_token,
+            } if negotiated => {
                 let Some(provider_id) = fuse_promise_runtime::ProviderId::from_raw(provider_id)
                 else {
                     write_error(
@@ -1134,6 +1202,12 @@ fn handle_client_requests(
                     )?;
                     continue;
                 };
+                if let Err(status) =
+                    state.validate_provider_owner(provider_id, provider_owner_token)?
+                {
+                    write_status_error(stream, status)?;
+                    continue;
+                }
 
                 let mut runtime = state
                     .runtime
@@ -1220,6 +1294,10 @@ fn handle_promise_commit(
         )?;
         return Ok(());
     };
+    if let Err(status) = state.validate_provider_owner(provider_id, request.provider_owner_token)? {
+        write_status_error(stream, status)?;
+        return Ok(());
+    }
 
     let mount_status = state.mount_status()?;
     if !mount_status.ready_for_commits {
@@ -1994,6 +2072,18 @@ fn current_uid() -> u32 {
     rustix::process::getuid().as_raw()
 }
 
+fn generate_provider_owner_token() -> io::Result<u128> {
+    let mut random = fs::File::open("/dev/urandom")?;
+    let mut bytes = [0u8; 16];
+    loop {
+        random.read_exact(&mut bytes)?;
+        let token = u128::from_ne_bytes(bytes);
+        if token != 0 {
+            return Ok(token);
+        }
+    }
+}
+
 fn error_to_io(error: ErrorBody) -> io::Error {
     io::Error::new(error_code_to_io_kind(error.code), error.message)
 }
@@ -2064,9 +2154,13 @@ fn provider_read_status_to_status(status: ProviderReadStatus) -> Status {
 }
 
 impl PromiseCommitRequest {
-    pub fn from_builder(builder: &PromiseBuilder) -> Self {
+    pub fn from_builder_with_owner_token(
+        builder: &PromiseBuilder,
+        provider_owner_token: u128,
+    ) -> Self {
         Self {
             provider_id: builder.provider_id().raw(),
+            provider_owner_token,
             nodes: builder
                 .nodes()
                 .filter(|node| !node.relative_path.is_empty())
@@ -2090,6 +2184,7 @@ impl PromiseCommitRequest {
     fn into_body(self) -> PromiseCommitBody {
         PromiseCommitBody {
             provider_id: self.provider_id,
+            provider_owner_token: self.provider_owner_token,
             nodes: self
                 .nodes
                 .into_iter()
@@ -2591,13 +2686,17 @@ mod tests {
 
         write_frame(&mut client, &Request::ProviderRegister).unwrap();
         let response: Response = read_frame(&mut client).unwrap().unwrap();
-        let provider_id = match response {
-            Response::ProviderRegistered { provider_id } => provider_id,
-            other => panic!("unexpected response: {other:?}"),
-        };
+        let (provider_id, provider_owner_token) = registered_provider(response);
         assert_eq!(provider_id, 1);
 
-        write_frame(&mut client, &Request::ProviderUnregister { provider_id }).unwrap();
+        write_frame(
+            &mut client,
+            &Request::ProviderUnregister {
+                provider_id,
+                provider_owner_token,
+            },
+        )
+        .unwrap();
         let response: Response = read_frame(&mut client).unwrap().unwrap();
         assert_eq!(response, Response::ProviderUnregistered);
 
@@ -2621,7 +2720,10 @@ mod tests {
         send_hello(&mut client);
         write_frame(
             &mut client,
-            &Request::ProviderUnregister { provider_id: 99 },
+            &Request::ProviderUnregister {
+                provider_id: 99,
+                provider_owner_token: 1,
+            },
         )
         .unwrap();
         let response: Response = read_frame(&mut client).unwrap().unwrap();
@@ -2639,6 +2741,40 @@ mod tests {
     }
 
     #[test]
+    fn provider_unregister_rejects_wrong_owner_token() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let server_runtime = Arc::clone(&runtime);
+        let server_thread = thread::spawn(move || handle_client(server, &server_runtime));
+
+        send_hello(&mut client);
+        write_frame(&mut client, &Request::ProviderRegister).unwrap();
+        let (provider_id, provider_owner_token) =
+            registered_provider(read_frame(&mut client).unwrap().unwrap());
+
+        write_frame(
+            &mut client,
+            &Request::ProviderUnregister {
+                provider_id,
+                provider_owner_token: provider_owner_token ^ 1,
+            },
+        )
+        .unwrap();
+        let response: Response = read_frame(&mut client).unwrap().unwrap();
+
+        assert_eq!(
+            response,
+            Response::Error(ErrorBody {
+                code: ErrorCode::Permission,
+                message: "permission denied".to_owned(),
+            })
+        );
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
+    }
+
+    #[test]
     fn promise_commit_mutates_runtime() {
         let (mut client, server) = UnixStream::pair().unwrap();
         let runtime = Arc::new(Mutex::new(Runtime::new()));
@@ -2647,14 +2783,14 @@ mod tests {
 
         send_hello(&mut client);
         write_frame(&mut client, &Request::ProviderRegister).unwrap();
-        let provider_id = match read_frame(&mut client).unwrap().unwrap() {
-            Response::ProviderRegistered { provider_id } => provider_id,
-            other => panic!("unexpected response: {other:?}"),
-        };
+        let (provider_id, provider_owner_token) =
+            registered_provider(read_frame(&mut client).unwrap().unwrap());
 
         write_frame(
             &mut client,
-            &Request::PromiseCommit(sample_commit_request(provider_id).into_body()),
+            &Request::PromiseCommit(
+                sample_commit_request(provider_id, provider_owner_token).into_body(),
+            ),
         )
         .unwrap();
         let response: Response = read_frame(&mut client).unwrap().unwrap();
@@ -2684,13 +2820,13 @@ mod tests {
 
         send_hello(&mut client);
         write_frame(&mut client, &Request::ProviderRegister).unwrap();
-        let provider_id = match read_frame(&mut client).unwrap().unwrap() {
-            Response::ProviderRegistered { provider_id } => provider_id,
-            other => panic!("unexpected response: {other:?}"),
-        };
+        let (provider_id, provider_owner_token) =
+            registered_provider(read_frame(&mut client).unwrap().unwrap());
         write_frame(
             &mut client,
-            &Request::PromiseCommit(sample_commit_request(provider_id).into_body()),
+            &Request::PromiseCommit(
+                sample_commit_request(provider_id, provider_owner_token).into_body(),
+            ),
         )
         .unwrap();
         let _response: Response = read_frame(&mut client).unwrap().unwrap();
@@ -2721,14 +2857,14 @@ mod tests {
 
         send_hello(&mut client);
         write_frame(&mut client, &Request::ProviderRegister).unwrap();
-        let provider_id = match read_frame(&mut client).unwrap().unwrap() {
-            Response::ProviderRegistered { provider_id } => provider_id,
-            other => panic!("unexpected response: {other:?}"),
-        };
+        let (provider_id, provider_owner_token) =
+            registered_provider(read_frame(&mut client).unwrap().unwrap());
 
         write_frame(
             &mut client,
-            &Request::PromiseCommit(sample_commit_request(provider_id).into_body()),
+            &Request::PromiseCommit(
+                sample_commit_request(provider_id, provider_owner_token).into_body(),
+            ),
         )
         .unwrap();
         let response: Response = read_frame(&mut client).unwrap().unwrap();
@@ -2756,7 +2892,7 @@ mod tests {
         send_hello(&mut client);
         write_frame(
             &mut client,
-            &Request::PromiseCommit(sample_commit_request(99).into_body()),
+            &Request::PromiseCommit(sample_commit_request(99, 1).into_body()),
         )
         .unwrap();
         let response: Response = read_frame(&mut client).unwrap().unwrap();
@@ -2764,8 +2900,42 @@ mod tests {
         assert_eq!(
             response,
             Response::Error(ErrorBody {
-                code: ErrorCode::ProviderGone,
-                message: "provider gone".to_owned(),
+                code: ErrorCode::NotFound,
+                message: "not found".to_owned(),
+            })
+        );
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
+        assert_eq!(runtime.lock().unwrap().promise_count(), 0);
+    }
+
+    #[test]
+    fn promise_commit_rejects_wrong_provider_owner_token() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let server_state = mounted_state(Arc::clone(&runtime));
+        let server_thread = thread::spawn(move || handle_client_with_state(server, &server_state));
+
+        send_hello(&mut client);
+        write_frame(&mut client, &Request::ProviderRegister).unwrap();
+        let (provider_id, provider_owner_token) =
+            registered_provider(read_frame(&mut client).unwrap().unwrap());
+
+        write_frame(
+            &mut client,
+            &Request::PromiseCommit(
+                sample_commit_request(provider_id, provider_owner_token ^ 1).into_body(),
+            ),
+        )
+        .unwrap();
+        let response: Response = read_frame(&mut client).unwrap().unwrap();
+
+        assert_eq!(
+            response,
+            Response::Error(ErrorBody {
+                code: ErrorCode::Permission,
+                message: "permission denied".to_owned(),
             })
         );
 
@@ -2818,13 +2988,12 @@ mod tests {
 
             send_hello(&mut client);
             write_frame(&mut client, &Request::ProviderRegister).unwrap();
-            let provider_id = match read_frame(&mut client).unwrap().unwrap() {
-                Response::ProviderRegistered { provider_id } => provider_id,
-                other => panic!("{case}: unexpected provider response: {other:?}"),
-            };
+            let (provider_id, provider_owner_token) =
+                registered_provider(read_frame(&mut client).unwrap().unwrap());
 
             let mut request = request;
             request.provider_id = provider_id;
+            request.provider_owner_token = provider_owner_token;
             write_frame(&mut client, &Request::PromiseCommit(request)).unwrap();
             let response: Response = read_frame(&mut client).unwrap().unwrap();
             match response {
@@ -2850,10 +3019,7 @@ mod tests {
 
         send_hello(&mut client);
         write_frame(&mut client, &Request::ProviderRegister).unwrap();
-        let provider_id = match read_frame(&mut client).unwrap().unwrap() {
-            Response::ProviderRegistered { provider_id } => provider_id,
-            other => panic!("unexpected response: {other:?}"),
-        };
+        let (provider_id, _) = registered_provider(read_frame(&mut client).unwrap().unwrap());
 
         drop(client);
         server_thread.join().unwrap().unwrap();
@@ -2874,13 +3040,13 @@ mod tests {
 
         send_hello(&mut client);
         write_frame(&mut client, &Request::ProviderRegister).unwrap();
-        let provider_id = match read_frame(&mut client).unwrap().unwrap() {
-            Response::ProviderRegistered { provider_id } => provider_id,
-            other => panic!("unexpected response: {other:?}"),
-        };
+        let (provider_id, provider_owner_token) =
+            registered_provider(read_frame(&mut client).unwrap().unwrap());
         write_frame(
             &mut client,
-            &Request::PromiseCommit(sample_commit_request(provider_id).into_body()),
+            &Request::PromiseCommit(
+                sample_commit_request(provider_id, provider_owner_token).into_body(),
+            ),
         )
         .unwrap();
         let response: Response = read_frame(&mut client).unwrap().unwrap();
@@ -2908,18 +3074,16 @@ mod tests {
         let runtime = Arc::new(Mutex::new(Runtime::new()));
         let server_runtime = Arc::clone(&runtime);
         let server_thread = thread::spawn(move || {
-            for _ in 0..2 {
-                let (stream, _) = listener.accept().unwrap();
-                handle_client(stream, &server_runtime).unwrap();
-            }
+            let (stream, _) = listener.accept().unwrap();
+            handle_client(stream, &server_runtime).unwrap();
         });
 
-        let registration = register_provider(&socket_path).unwrap();
-        unregister_provider(&socket_path, registration.provider_id).unwrap();
+        let provider = connect_provider(&socket_path).unwrap();
+        let provider_id = provider.provider_id();
+        provider.unregister().unwrap();
 
         server_thread.join().unwrap();
-        let provider_id =
-            fuse_promise_runtime::ProviderId::from_raw(registration.provider_id).unwrap();
+        let provider_id = fuse_promise_runtime::ProviderId::from_raw(provider_id).unwrap();
         assert_eq!(
             runtime.lock().unwrap().provider(provider_id).unwrap().state,
             ProviderState::Disconnected
@@ -2940,10 +3104,8 @@ mod tests {
 
         send_hello(&mut provider.stream);
         write_frame(&mut provider.stream, &Request::ProviderRegister).unwrap();
-        let provider_id = match read_frame(&mut provider.stream).unwrap().unwrap() {
-            Response::ProviderRegistered { provider_id } => provider_id,
-            other => panic!("unexpected response: {other:?}"),
-        };
+        let (provider_id, _) =
+            registered_provider(read_frame(&mut provider.stream).unwrap().unwrap());
 
         let route_state = state.clone();
         let read_thread = thread::spawn(move || {
@@ -2997,16 +3159,12 @@ mod tests {
 
         send_hello(&mut provider_one.stream);
         write_frame(&mut provider_one.stream, &Request::ProviderRegister).unwrap();
-        let provider_one_id = match read_frame(&mut provider_one.stream).unwrap().unwrap() {
-            Response::ProviderRegistered { provider_id } => provider_id,
-            other => panic!("unexpected response: {other:?}"),
-        };
+        let (provider_one_id, _) =
+            registered_provider(read_frame(&mut provider_one.stream).unwrap().unwrap());
         send_hello(&mut provider_two.stream);
         write_frame(&mut provider_two.stream, &Request::ProviderRegister).unwrap();
-        let _provider_two_id = match read_frame(&mut provider_two.stream).unwrap().unwrap() {
-            Response::ProviderRegistered { provider_id } => provider_id,
-            other => panic!("unexpected response: {other:?}"),
-        };
+        let (_provider_two_id, _) =
+            registered_provider(read_frame(&mut provider_two.stream).unwrap().unwrap());
 
         let route_state = state.clone();
         let read_thread = thread::spawn(move || {
@@ -3064,8 +3222,11 @@ mod tests {
         });
 
         let provider = connect_provider(&socket_path).unwrap();
-        let response =
-            commit_promise(&socket_path, sample_commit_request(provider.provider_id())).unwrap();
+        let response = commit_promise(
+            &socket_path,
+            sample_commit_request(provider.provider_id(), provider.provider_owner_token()),
+        )
+        .unwrap();
 
         assert_eq!(response.promise_id, "promise-1");
         assert_eq!(
@@ -3100,9 +3261,10 @@ mod tests {
             )
             .unwrap();
 
-        let request = PromiseCommitRequest::from_builder(&builder);
+        let request = PromiseCommitRequest::from_builder_with_owner_token(&builder, 42);
 
         assert_eq!(request.provider_id, 7);
+        assert_eq!(request.provider_owner_token, 42);
         assert_eq!(request.nodes.len(), 2);
         assert_eq!(request.nodes[0].kind, PromiseNodeKind::Directory);
         assert_eq!(request.nodes[0].relative_path, "docs");
@@ -3354,6 +3516,16 @@ mod tests {
         );
     }
 
+    fn registered_provider(response: Response) -> (u64, u128) {
+        match response {
+            Response::ProviderRegistered {
+                provider_id,
+                provider_owner_token,
+            } => (provider_id, provider_owner_token),
+            other => panic!("unexpected provider response: {other:?}"),
+        }
+    }
+
     fn mounted_state(runtime: Arc<Mutex<Runtime>>) -> IpcState {
         let state = IpcState::new(runtime);
         state
@@ -3380,9 +3552,10 @@ mod tests {
         LOCK.get_or_init(|| TestMutex::new(())).lock().unwrap()
     }
 
-    fn sample_commit_request(provider_id: u64) -> PromiseCommitRequest {
+    fn sample_commit_request(provider_id: u64, provider_owner_token: u128) -> PromiseCommitRequest {
         PromiseCommitRequest {
             provider_id,
+            provider_owner_token,
             nodes: vec![
                 PromiseNodeSpec {
                     kind: PromiseNodeKind::Directory,
@@ -3412,7 +3585,7 @@ mod tests {
         name: &'static str,
         mutate: impl FnOnce(&mut PromiseCommitBody),
     ) -> (&'static str, PromiseCommitBody) {
-        let mut request = sample_commit_request(1).into_body();
+        let mut request = sample_commit_request(1, 1).into_body();
         mutate(&mut request);
         (name, request)
     }

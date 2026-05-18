@@ -48,8 +48,10 @@ peers whose UID differs from the daemon UID.
 ## Provider and Promise Ownership
 
 Committed Promise trees are owned by `fuse-promised`. Provider processes receive
-opaque provider ids through the private IPC path and can only satisfy reads for
-promises owned by their registered provider session.
+opaque provider ids and private owner tokens through the private IPC path.
+Provider unregister and Promise commit mutations require the matching owner
+token, and provider read responses are accepted only from the connection that
+registered the provider.
 
 Provider disconnect marks non-materialized and non-cache-satisfied promises
 unavailable. Complete materialized files, and complete cached ranges in
