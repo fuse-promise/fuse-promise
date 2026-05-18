@@ -69,6 +69,11 @@ targets, including existing symlink targets, during preflight. Created target
 identity is tracked during cleanup so later failures do not remove unrelated
 files.
 
+Private IPC frames are size-bounded. Provider read requests require nonzero
+lengths, reject lengths above the configured maximum, and reject offset/length
+overflow. Provider read responses are checked against the original request and
+cannot exceed the maximum provider read size.
+
 ## Non-Goals
 
 This repository does not provide:

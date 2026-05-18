@@ -440,13 +440,14 @@ stable ABI.
 - [x] Validate `XDG_RUNTIME_DIR` ownership and permissions.
 - [x] Validate control socket ownership and type.
 - [x] Validate provider ownership for all daemon mutations.
-- [ ] Validate paths and prevent path traversal.
+- [x] Validate paths and prevent path traversal.
 - [x] Validate materialize targets and symlink behavior.
-- [ ] Validate read ranges and message sizes.
+- [x] Validate read ranges and message sizes.
 
 Suggested verification:
 
 ```sh
+cargo test -p fuse-promise-runtime --locked
 cargo test -p fuse-promise-ipc --locked
 tests/control-socket-security.sh
 tests/materialize-security.sh
