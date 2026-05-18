@@ -53,6 +53,8 @@ plugins, or application-specific integrations.
   through private IPC.
 - [x] `fp_promise_commit()` is gated on daemon commit readiness and
   `fp_materialize()` returns `FP_ERR_UNAVAILABLE` until materialize IPC exists.
+- [x] `fp_promise_commit()` has FFI coverage for the commit-ready success path
+  returning `$XDG_RUNTIME_DIR/fuse-promise/<promise-id>`.
 - [x] Basic Rust and C header verification passes.
 
 Baseline verification:
@@ -101,18 +103,18 @@ This queue is the current goal list for turning the framework into behavior.
 Each row should become one focused implementation loop with one verification
 pass and one pushable commit.
 
-| Order | Goal | Primary Scope | Exit Check |
-|---:|---|---|---|
-| 1 | Freeze MVP visible layout | Runtime, FUSE adapter, CLI docs, and tests. | The root directory and `$XDG_RUNTIME_DIR/fuse-promise/<promise-id>` layout are documented before more FUSE behavior depends on it. |
-| 2 | Finish G1.4 public commit success path | FFI test coverage over a daemon commit-ready state; no public ABI change. | `fp_promise_commit()` returns `FP_OK`, writes `$XDG_RUNTIME_DIR/fuse-promise/promise-1`, and consumes the builder only on success. |
-| 3 | Verify G1.5 feature build gate | Environment and daemon feature build; no fallback to unsafe paths. | `pkg-config --exists fuse3` and `cargo check -p fuse-promise-daemon --features fuse-mount --locked` pass without stubs. |
-| 4 | Verify G1.5 real mount lifecycle | Feature daemon runtime with shared `XDG_RUNTIME_DIR`. | `mountpoint -q "$XDG_RUNTIME_DIR/fuse-promise"` succeeds, `fpctl status` reports mounted state, and daemon shutdown unmounts cleanly. |
-| 5 | Close G1.6 metadata-only FUSE ops | Feature-gated `lookup`, `getattr`, and `readdir` over daemon runtime. | `stat`, `ls`, and `find` work against a committed tree without provider read requests. |
-| 6 | Close G1.6 FUSE read routing | Feature-gated `open`, offset `read`, `release`, and errno mapping. | `cat` and offset `dd` request only needed byte ranges and provider errors map deterministically. |
-| 7 | Close G1.7 read-only MVP gate | End-to-end provider, commit, mount, inspect, lazy read, and disconnect behavior. | A provider-created tree is visible, metadata reads transfer no bytes, file reads route only requested ranges, and disconnect errors are deterministic. |
-| 8 | Start G2.1 single-file materialize | Private materialize IPC plus daemon file copy using the existing read path. | `fpctl materialize <promise-file> <target-dir>` writes matching file content and metadata. |
-| 9 | Add G2.2 directory materialize | Recursive tree walk, directory creation, child file materialize, metadata application. | `diff -r` matches an expected directory tree. |
-| 10 | Harden G3 developer ABI | Header/constant/layout/symbol/panic tests and C examples. | Public ABI tests pass and examples link only through the public header and pkg-config metadata. |
+| Status | Order | Goal | Primary Scope | Exit Check |
+|---|---:|---|---|---|
+| [x] | 1 | Freeze MVP visible layout | Runtime, FUSE adapter, CLI docs, and tests. | The root directory and `$XDG_RUNTIME_DIR/fuse-promise/<promise-id>` layout are documented before more FUSE behavior depends on it. |
+| [x] | 2 | Finish G1.4 public commit success path | FFI test coverage over a daemon commit-ready state; no public ABI change. | `fp_promise_commit()` returns `FP_OK`, writes `$XDG_RUNTIME_DIR/fuse-promise/promise-1`, and consumes the builder only on success. |
+| [ ] | 3 | Verify G1.5 feature build gate | Environment and daemon feature build; no fallback to unsafe paths. | `pkg-config --exists fuse3` and `cargo check -p fuse-promise-daemon --features fuse-mount --locked` pass without stubs. |
+| [ ] | 4 | Verify G1.5 real mount lifecycle | Feature daemon runtime with shared `XDG_RUNTIME_DIR`. | `mountpoint -q "$XDG_RUNTIME_DIR/fuse-promise"` succeeds, `fpctl status` reports mounted state, and daemon shutdown unmounts cleanly. |
+| [ ] | 5 | Close G1.6 metadata-only FUSE ops | Feature-gated `lookup`, `getattr`, and `readdir` over daemon runtime. | `stat`, `ls`, and `find` work against a committed tree without provider read requests. |
+| [ ] | 6 | Close G1.6 FUSE read routing | Feature-gated `open`, offset `read`, `release`, and errno mapping. | `cat` and offset `dd` request only needed byte ranges and provider errors map deterministically. |
+| [ ] | 7 | Close G1.7 read-only MVP gate | End-to-end provider, commit, mount, inspect, lazy read, and disconnect behavior. | A provider-created tree is visible, metadata reads transfer no bytes, file reads route only requested ranges, and disconnect errors are deterministic. |
+| [ ] | 8 | Start G2.1 single-file materialize | Private materialize IPC plus daemon file copy using the existing read path. | `fpctl materialize <promise-file> <target-dir>` writes matching file content and metadata. |
+| [ ] | 9 | Add G2.2 directory materialize | Recursive tree walk, directory creation, child file materialize, metadata application. | `diff -r` matches an expected directory tree. |
+| [ ] | 10 | Harden G3 developer ABI | Header/constant/layout/symbol/panic tests and C examples. | Public ABI tests pass and examples link only through the public header and pkg-config metadata. |
 
 ## Phase 0: Foundation
 
@@ -216,7 +218,9 @@ Acceptance:
 - [x] Validate node type, permission bits, file size, mtime, duplicate paths,
   and parent directories.
 - [x] Commit static snapshot Promise trees.
-- [~] Return a visible path under `$XDG_RUNTIME_DIR/fuse-promise/`.
+- [~] Return a visible path under `$XDG_RUNTIME_DIR/fuse-promise/`; the public
+  ABI success path is covered against a commit-ready daemon state, while real
+  mounted-path verification remains part of G1.5.
 
 Acceptance:
 

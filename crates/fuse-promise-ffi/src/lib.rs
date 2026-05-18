@@ -667,8 +667,17 @@ fn io_to_ffi(error: io::Error) -> fp_status_t {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fuse_promise_ipc::{read_provider_read_response, write_provider_read_request};
+    use fuse_promise_ipc::{
+        read_provider_read_response, serve_state, write_provider_read_request, IpcMountStatus,
+        IpcState,
+    };
+    use fuse_promise_runtime::Runtime;
+    use std::ffi::OsString;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixStream;
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     #[test]
     fn dispatch_provider_read_calls_c_callback() {
@@ -732,6 +741,149 @@ mod tests {
         assert_eq!(status, FP_ERR_UNAVAILABLE);
         assert_eq!(out_path[0], 0);
         assert!(builder.builder.lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn promise_commit_success_returns_visible_path() {
+        let runtime_dir = unique_runtime_dir();
+        fs::create_dir(&runtime_dir).unwrap();
+        fs::set_permissions(&runtime_dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let mount_path = runtime_dir.join("fuse-promise");
+        fs::create_dir(&mount_path).unwrap();
+        fs::set_permissions(&mount_path, fs::Permissions::from_mode(0o700)).unwrap();
+        let _cleanup = RuntimeDirCleanup(runtime_dir.clone());
+        let _env = EnvGuard::set("XDG_RUNTIME_DIR", runtime_dir.as_os_str().to_os_string());
+
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let state = IpcState::new(runtime);
+        state
+            .set_mount_status(IpcMountStatus::commit_ready(mount_path.clone()))
+            .unwrap();
+
+        thread::spawn(move || serve_state(state).unwrap());
+        let socket_path = default_control_socket_path().unwrap();
+        wait_for_socket(&socket_path);
+
+        let runtime_dir_c = CString::new(runtime_dir.to_str().unwrap()).unwrap();
+        let options = fp_context_options_t {
+            struct_size: std::mem::size_of::<fp_context_options_t>() as u32,
+            api_version: API_VERSION,
+            runtime_dir: runtime_dir_c.as_ptr(),
+        };
+        let mut context = ptr::null_mut();
+        let status = unsafe { fp_context_open(&options, &mut context) };
+        assert_eq!(status, FP_OK);
+        assert!(!context.is_null());
+
+        let ops = fp_provider_ops_t {
+            struct_size: std::mem::size_of::<fp_provider_ops_t>() as u32,
+            read: Some(test_read_callback),
+        };
+        let mut provider = ptr::null_mut();
+        let status =
+            unsafe { fp_provider_register(context, &ops, std::ptr::null_mut(), &mut provider) };
+        assert_eq!(status, FP_OK);
+        assert!(!provider.is_null());
+
+        let mut builder = ptr::null_mut();
+        let status = unsafe { fp_promise_builder_new(context, provider, &mut builder) };
+        assert_eq!(status, FP_OK);
+        assert!(!builder.is_null());
+
+        let dir = CString::new("docs").unwrap();
+        let dir_node = CString::new("remote-dir-1").unwrap();
+        let dir_attr = fp_node_attr_t {
+            struct_size: std::mem::size_of::<fp_node_attr_t>() as u32,
+            mode: 0o755,
+            size: 0,
+            mtime_nsec: 0,
+        };
+        let status =
+            unsafe { fp_promise_add_dir(builder, dir.as_ptr(), &dir_attr, dir_node.as_ptr()) };
+        assert_eq!(status, FP_OK);
+
+        let file = CString::new("docs/readme.txt").unwrap();
+        let file_node = CString::new("remote-file-1").unwrap();
+        let file_attr = fp_node_attr_t {
+            struct_size: std::mem::size_of::<fp_node_attr_t>() as u32,
+            mode: 0o644,
+            size: 12,
+            mtime_nsec: 0,
+        };
+        let status =
+            unsafe { fp_promise_add_file(builder, file.as_ptr(), &file_attr, file_node.as_ptr()) };
+        assert_eq!(status, FP_OK);
+
+        let mut out_path = [0_i8; 512];
+        let status = unsafe { fp_promise_commit(builder, out_path.as_mut_ptr(), out_path.len()) };
+        assert_eq!(status, FP_OK);
+
+        let visible_path = unsafe { CStr::from_ptr(out_path.as_ptr()) };
+        assert_eq!(
+            visible_path.to_str().unwrap(),
+            mount_path.join("promise-1").to_str().unwrap()
+        );
+        assert_eq!(
+            unsafe { fp_promise_commit(builder, out_path.as_mut_ptr(), out_path.len()) },
+            FP_ERR_INVALID_ARGUMENT
+        );
+
+        unsafe {
+            fp_promise_builder_free(builder);
+            fp_provider_unregister(provider);
+            fp_context_close(context);
+        }
+    }
+
+    fn unique_runtime_dir() -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("fuse-promise-ffi-{}-{stamp}", std::process::id()))
+    }
+
+    fn wait_for_socket(socket_path: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if UnixStream::connect(socket_path).is_ok() {
+                return;
+            }
+            if Instant::now() >= deadline {
+                panic!("timed out waiting for {}", socket_path.display());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        old: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: OsString) -> Self {
+            let old = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, old }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.old {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    struct RuntimeDirCleanup(PathBuf);
+
+    impl Drop for RuntimeDirCleanup {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 
     fn sample_read_request() -> ProviderReadRequest {
