@@ -1041,6 +1041,7 @@ mod tests {
     use super::*;
     use fuse_promise_runtime::{PromiseState, ProviderState};
     use std::io::Cursor;
+    use std::os::unix::fs::PermissionsExt;
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1096,7 +1097,9 @@ mod tests {
 
     #[test]
     fn client_and_server_negotiate_status() {
-        std::env::set_var("XDG_RUNTIME_DIR", "/tmp");
+        let runtime_dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        std::env::set_var("XDG_RUNTIME_DIR", runtime_dir.path());
         let (mut client, server) = UnixStream::pair().unwrap();
         let mut runtime = Runtime::new();
         runtime.register_provider();

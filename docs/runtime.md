@@ -54,9 +54,11 @@ Typical resolved path:
 
 The runtime should avoid a global shared default mount because Promise ownership and provider callbacks are user-session scoped.
 
-`XDG_RUNTIME_DIR` must be present and absolute. The daemon should create the
-`fuse-promise` child directory with user-session scoped permissions and fail
-explicitly if the runtime directory is unsafe or unavailable.
+`XDG_RUNTIME_DIR` must be present, absolute, owned by the current user, an
+existing directory, and not accessible by group or other users. The daemon
+should create the `fuse-promise` child directory with user-session scoped
+permissions and fail explicitly if the runtime directory is unsafe or
+unavailable.
 
 ## Daemon Responsibilities
 

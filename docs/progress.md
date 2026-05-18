@@ -37,6 +37,8 @@ plugins, or application-specific integrations.
   public C read callback.
 - [x] Runtime read planning enforces provider ownership, file node type,
   provider-gone state, and EOF capping.
+- [x] Runtime rejects missing, relative, non-directory, foreign-owned, or
+  group/other-accessible `XDG_RUNTIME_DIR` paths.
 - [x] `fpctl status` queries the daemon when connected and falls back to
   `daemon=not-connected` when disconnected.
 - [x] `fp_promise_commit()` and `fp_materialize()` return
@@ -184,7 +186,7 @@ Acceptance:
 
 - [x] Pick and document the internal FUSE backend.
 - [ ] Mount `$XDG_RUNTIME_DIR/fuse-promise/`.
-- [ ] Fail explicitly if `XDG_RUNTIME_DIR` is missing, not absolute, unsafe, or
+- [x] Fail explicitly if `XDG_RUNTIME_DIR` is missing, not absolute, unsafe, or
   not owned by the current user.
 - [ ] Cleanly unmount on daemon exit.
 - [ ] Keep mount lifecycle user-session scoped.

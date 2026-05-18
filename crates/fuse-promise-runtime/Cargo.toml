@@ -9,3 +9,9 @@ authors.workspace = true
 [lib]
 name = "fuse_promise_runtime"
 path = "src/lib.rs"
+
+[dependencies]
+rustix.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

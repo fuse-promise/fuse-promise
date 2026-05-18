@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
+use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 pub const API_VERSION: u32 = 1;
@@ -427,6 +429,17 @@ pub fn validate_runtime_dir_path(runtime_dir: &Path) -> Result<()> {
         return Err(Status::InvalidArgument);
     }
 
+    let metadata = fs::metadata(runtime_dir).map_err(|_| Status::Unavailable)?;
+    if !metadata.is_dir() {
+        return Err(Status::InvalidArgument);
+    }
+    if metadata.uid() != rustix::process::getuid().as_raw() {
+        return Err(Status::Permission);
+    }
+    if metadata.mode() & 0o077 != 0 {
+        return Err(Status::Permission);
+    }
+
     Ok(())
 }
 
@@ -484,6 +497,7 @@ fn validate_attr(kind: NodeKind, attr: NodeAttr) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn normalizes_safe_relative_paths() {
@@ -659,6 +673,35 @@ mod tests {
         assert_eq!(
             runtime.plan_read("promise-1", "docs/readme.txt", 0, 1),
             Err(Status::ProviderGone)
+        );
+    }
+
+    #[test]
+    fn validates_safe_runtime_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert_eq!(validate_runtime_dir_path(dir.path()), Ok(()));
+    }
+
+    #[test]
+    fn rejects_unsafe_runtime_directory_paths() {
+        assert_eq!(
+            validate_runtime_dir_path(Path::new("relative")),
+            Err(Status::InvalidArgument)
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            validate_runtime_dir_path(dir.path()),
+            Err(Status::Permission)
+        );
+
+        let file = tempfile::NamedTempFile::new().unwrap();
+        assert_eq!(
+            validate_runtime_dir_path(file.path()),
+            Err(Status::InvalidArgument)
         );
     }
 

@@ -14,3 +14,6 @@ path = "src/lib.rs"
 bincode.workspace = true
 fuse-promise-runtime = { path = "../fuse-promise-runtime" }
 rustix.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -386,6 +386,10 @@ The daemon runtime plans reads before provider IPC. Planning resolves the
 committed Promise tree, enforces provider ownership and provider liveness,
 rejects non-file nodes, and caps read length at EOF.
 
+Runtime directory validation rejects missing, relative, non-directory,
+foreign-owned, or group/other-accessible `XDG_RUNTIME_DIR` paths before mount
+or control socket paths are derived.
+
 ## Failure Model
 
 The runtime must produce deterministic failures for:
