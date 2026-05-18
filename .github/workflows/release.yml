@@ -1,0 +1,188 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v* tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: "1.85"
+  GO_TOOLCHAIN: "1.25"
+  NFPM_VERSION: "v2.46.3"
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+  CLOUDSMITH_REPOSITORY: ${{ vars.CLOUDSMITH_REPOSITORY }}
+  CLOUDSMITH_DEB_DISTRIBUTION: ${{ vars.CLOUDSMITH_DEB_DISTRIBUTION || 'ubuntu' }}
+  CLOUDSMITH_DEB_RELEASE: ${{ vars.CLOUDSMITH_DEB_RELEASE || 'any-version' }}
+  CLOUDSMITH_DEB_COMPONENT: ${{ vars.CLOUDSMITH_DEB_COMPONENT || 'main' }}
+  CLOUDSMITH_RPM_DISTRIBUTION: ${{ vars.CLOUDSMITH_RPM_DISTRIBUTION || 'el' }}
+  CLOUDSMITH_RPM_RELEASE: ${{ vars.CLOUDSMITH_RPM_RELEASE || '9' }}
+
+jobs:
+  package:
+    name: Build and publish packages
+    runs-on: ${{ fromJSON(vars.RELEASE_RUNNER || '"ubuntu-22.04"') }}
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Validate release tag
+        run: |
+          case "$RELEASE_TAG" in
+            v*) ;;
+            *)
+              echo "::error::Release tag must start with v"
+              exit 1
+              ;;
+          esac
+
+          git rev-parse "$RELEASE_TAG^{commit}" >/dev/null
+          exact_tag=$(git describe --tags --exact-match HEAD)
+          if [ "$exact_tag" != "$RELEASE_TAG" ]; then
+            echo "::error::Checked out commit is $exact_tag, expected $RELEASE_TAG"
+            exit 1
+          fi
+
+          cargo_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          if [ "$cargo_version" != "${RELEASE_TAG#v}" ]; then
+            echo "::error::Cargo version $cargo_version does not match $RELEASE_TAG"
+            exit 1
+          fi
+
+      - name: Install system dependencies
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            if command -v sudo >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y build-essential pkg-config libfuse3-dev fuse3 rpm python3-pip
+            elif [ "$(id -u)" -eq 0 ]; then
+              apt-get update
+              apt-get install -y build-essential pkg-config libfuse3-dev fuse3 rpm python3-pip
+            else
+              echo "::notice::apt-get is available but sudo is not; assuming runner dependencies are preinstalled."
+            fi
+          fi
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_TOOLCHAIN }}
+
+      - name: Cache Cargo state
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: Run release gates
+        run: |
+          cargo fmt --check --all
+          cargo check --workspace --locked
+          cargo test --workspace --locked
+          BUILD_PROFILE=release SONAME_MAJOR=1 tests/abi-hardening.sh
+          BUILD_PROFILE=release SONAME_MAJOR=1 tests/install-metadata.sh
+          tests/control-socket-security.sh
+          tests/materialize-security.sh
+          git diff --check
+
+      - name: Run mounted FUSE gates when available
+        id: mounted-fuse-gates
+        run: |
+          if [ -c /dev/fuse ] && command -v fusermount3 >/dev/null 2>&1 && pkg-config --exists fuse3; then
+            BUILD_PROFILE=release SONAME_MAJOR=1 tests/read-only-mvp-smoke.sh
+            BUILD_PROFILE=release SONAME_MAJOR=1 tests/read-through-cache-smoke.sh
+            BUILD_PROFILE=release SONAME_MAJOR=1 tests/performance-stress.sh
+            echo "status=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Mounted FUSE gates skipped because this runner lacks /dev/fuse, fusermount3, or fuse3 pkg-config metadata."
+            echo "::notice::Run the FUSE Stable Gates workflow on a self-hosted linux/fuse runner for strict release validation."
+            echo "status=skipped" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install nFPM
+        run: |
+          go install "github.com/goreleaser/nfpm/v2/cmd/nfpm@$NFPM_VERSION"
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - name: Build DEB and RPM packages
+        run: scripts/package-linux.sh
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuse-promise-${{ env.RELEASE_TAG }}-linux-packages
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Require mounted FUSE gates for package repository publish
+        if: ${{ env.CLOUDSMITH_API_KEY != '' && env.CLOUDSMITH_REPOSITORY != '' && steps.mounted-fuse-gates.outputs.status != 'passed' }}
+        run: |
+          echo "::error::Cloudsmith package repository publish requires mounted FUSE gates to pass."
+          echo "::error::Run this release on a runner with /dev/fuse, fusermount3, and fuse3 pkg-config metadata."
+          exit 1
+
+      - name: Publish GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* \
+              --title "$RELEASE_TAG" \
+              --notes-file docs/release-notes-stable.md \
+              --verify-tag
+          fi
+
+      - name: Install Cloudsmith CLI
+        if: ${{ env.CLOUDSMITH_API_KEY != '' && env.CLOUDSMITH_REPOSITORY != '' && steps.mounted-fuse-gates.outputs.status == 'passed' }}
+        run: python3 -m pip install --user cloudsmith-cli
+
+      - name: Publish package repository assets to Cloudsmith
+        if: ${{ env.CLOUDSMITH_API_KEY != '' && env.CLOUDSMITH_REPOSITORY != '' && steps.mounted-fuse-gates.outputs.status == 'passed' }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          for package in dist/*.deb; do
+            cloudsmith push deb \
+              "$CLOUDSMITH_REPOSITORY/$CLOUDSMITH_DEB_DISTRIBUTION/$CLOUDSMITH_DEB_RELEASE" \
+              "$package" \
+              --component "$CLOUDSMITH_DEB_COMPONENT"
+          done
+          for package in dist/*.rpm; do
+            cloudsmith push rpm \
+              "$CLOUDSMITH_REPOSITORY/$CLOUDSMITH_RPM_DISTRIBUTION/$CLOUDSMITH_RPM_RELEASE" \
+              "$package"
+          done
+
+      - name: Report skipped package repository publish
+        if: ${{ env.CLOUDSMITH_API_KEY == '' || env.CLOUDSMITH_REPOSITORY == '' }}
+        run: |
+          echo "::notice::Cloudsmith publish skipped. Configure CLOUDSMITH_API_KEY and CLOUDSMITH_REPOSITORY to publish apt/yum repositories."

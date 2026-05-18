@@ -50,7 +50,7 @@ Installed files:
 ```text
 <includedir>/fuse-promise/fuse-promise.h
 <libdir>/libfusepromise.so.<version>
-<libdir>/libfusepromise.so.0
+<libdir>/libfusepromise.so.1
 <libdir>/libfusepromise.so
 <libdir>/pkgconfig/fuse-promise.pc
 <bindir>/fuse-promised
@@ -75,6 +75,74 @@ DESTDIR="$pkgdir" PREFIX=/usr DAEMON_FEATURES=fuse-mount scripts/install-dev.sh
 
 The generated pkg-config file and systemd service must not include the staging
 root in `includedir`, `libdir`, or `ExecStart`.
+
+## DEB and RPM Packages
+
+The repository ships an nFPM configuration and a local package wrapper:
+
+```sh
+scripts/package-linux.sh
+```
+
+The wrapper stages a release build with:
+
+```sh
+DESTDIR=<stage> PREFIX=/usr BUILD_PROFILE=release SONAME_MAJOR=1 DAEMON_FEATURES=fuse-mount scripts/install-dev.sh
+```
+
+It then writes these artifacts to `dist/`:
+
+```text
+fuse-promise_<version>-1_<arch>.deb
+fuse-promise-<version>-1.<arch>.rpm
+SHA256SUMS
+```
+
+The generated packages contain the public C ABI, shared library symlinks for
+SONAME major `1`, pkg-config metadata, `fuse-promised`, `fpctl`, and the
+systemd user service.
+
+## GitHub Actions
+
+The repository uses custom workflows instead of the generic GitHub Rust
+template:
+
+- `CI` runs deterministic Rust, ABI, install metadata, and security gates on
+  GitHub-hosted Ubuntu runners.
+- `FUSE Stable Gates` runs `tests/stable-release-gates.sh` on a self-hosted
+  runner labeled `linux` and `fuse`, because mounted FUSE tests require
+  `/dev/fuse` and `fusermount3`.
+- `Release` builds DEB/RPM artifacts for `v*` tags, uploads them to the GitHub
+  Release, and optionally publishes them to Cloudsmith.
+- Cloudsmith repository publishing is gated on the mounted FUSE tests passing.
+  If a GitHub-hosted runner lacks `/dev/fuse`, the workflow can still build
+  GitHub Release assets, but public apt/yum repository publishing requires a
+  runner with FUSE support.
+
+Set the optional `RELEASE_RUNNER` repository variable to choose the runner for
+the `Release` workflow. The default is `"ubuntu-22.04"`. To publish through a
+self-hosted FUSE runner, set it to JSON:
+
+```json
+["self-hosted", "linux", "fuse"]
+```
+
+To publish public apt/yum repositories through Cloudsmith, configure:
+
+```text
+CLOUDSMITH_API_KEY        repository secret
+CLOUDSMITH_REPOSITORY     repository variable, for example owner/repository
+```
+
+Optional repository variables select upload targets:
+
+```text
+CLOUDSMITH_DEB_DISTRIBUTION    default ubuntu
+CLOUDSMITH_DEB_RELEASE         default any-version
+CLOUDSMITH_DEB_COMPONENT       default main
+CLOUDSMITH_RPM_DISTRIBUTION    default el
+CLOUDSMITH_RPM_RELEASE         default 9
+```
 
 ## User Service
 
