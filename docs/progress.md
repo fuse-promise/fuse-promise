@@ -279,6 +279,7 @@ provider disconnect, and provider-gone read failure:
 ```sh
 tests/read-only-mvp-smoke.sh
 tests/read-through-cache-smoke.sh
+tests/performance-stress.sh
 ```
 
 ### G1.7 Read-Only MVP Gate
@@ -408,8 +409,8 @@ semantics.
 - [x] Add sequential prefetch.
 - [x] Add read coalescing.
 - [x] Add materialized-file passthrough.
-- [ ] Stress test large trees.
-- [ ] Stress test large files and random reads.
+- [x] Stress test large trees.
+- [x] Stress test large files and random reads.
 
 Acceptance:
 
@@ -425,6 +426,8 @@ Acceptance:
   reads.
 - Read-through mode coalesces provider reads to cache chunks while returning
   only the originally requested bytes to FUSE.
+- `tests/performance-stress.sh` verifies metadata-only traversal over a large
+  tree and bounded provider transfer for random reads from a large file.
 
 ## Phase 5: Stable System Component
 
@@ -510,6 +513,7 @@ wait "$daemon_pid" || true
 ! mountpoint -q "$XDG_RUNTIME_DIR/fuse-promise"
 fusermount3 -u "$XDG_RUNTIME_DIR/fuse-promise" || true
 tests/read-only-mvp-smoke.sh
+tests/performance-stress.sh
 ```
 
 ## Out of Scope for This Repository

@@ -25,11 +25,12 @@ behind the `fuse-mount` feature; default builds report `fuse_adapter=disabled`
 until the libfuse3 development dependency is present. The feature-gated adapter
 now contains read-only `lookup`, `getattr`, `readdir`, `open`, `read`, and
 `release` callbacks over the daemon runtime and provider read routing. Real
-mounted committed-tree smokes are available as `tests/read-only-mvp-smoke.sh`
-and `tests/read-through-cache-smoke.sh`; they cover `fpctl status`,
-`fpctl list`, `find`, `ls`, `stat`, offset `dd`, `cat`, `cp`, file
-materialize, directory materialize, provider-gone read errors, and the optional
-read-through cache mode.
+mounted committed-tree smokes are available as `tests/read-only-mvp-smoke.sh`,
+`tests/read-through-cache-smoke.sh`, and `tests/performance-stress.sh`; they
+cover `fpctl status`, `fpctl list`, `find`, `ls`, `stat`, offset `dd`, `cat`,
+`cp`, file materialize, directory materialize, provider-gone read errors, the
+optional read-through cache mode, large metadata-only tree traversal, and
+bounded random reads from a large promised file.
 File and directory subtree materialize are implemented for the
 fail-on-conflict policy; overwrite/rename policies, progress, and cancellation
 remain under development. The runtime exposes `cache_policy=no-cache` by
