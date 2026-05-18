@@ -65,6 +65,40 @@ typedef uint32_t fp_status_t;
 const char *fp_status_string(fp_status_t status);
 ```
 
+Status meanings:
+
+| Status | Meaning |
+|---|---|
+| `FP_OK` | Operation completed successfully. |
+| `FP_ERR_INVALID_ARGUMENT` | A pointer, struct size, enum value, path, buffer, or state transition supplied by the caller is invalid. |
+| `FP_ERR_UNAVAILABLE` | The daemon, mount, runtime directory, or requested unsupported mode is not available. |
+| `FP_ERR_PERMISSION` | The operation was rejected because ownership, permissions, or provider identity checks failed. |
+| `FP_ERR_NOT_FOUND` | The requested Promise, node, provider-owned object, or filesystem path was not found. |
+| `FP_ERR_ALREADY_EXISTS` | A fail-on-conflict operation found an existing target. |
+| `FP_ERR_PROVIDER_GONE` | The provider that owns the Promise disconnected before the operation could be satisfied. |
+| `FP_ERR_IO` | An internal or underlying filesystem I/O failure occurred. |
+| `FP_ERR_TIMEOUT` | A provider or daemon operation timed out. |
+| `FP_ERR_CANCELLED` | A cancellable operation was cancelled. The current developer preview reserves this value before public cancellation APIs are implemented. |
+| `FP_ERR_VERSION_MISMATCH` | The caller's ABI version or private client/daemon protocol version is incompatible with the runtime. |
+
+Filesystem errno mappings used by FUSE callbacks:
+
+| Runtime Condition | Filesystem Error |
+|---|---:|
+| Missing inode, path, or child | `ENOENT` |
+| Directory opened or read as a file | `EISDIR` |
+| Invalid offset, size, path, or argument | `EINVAL` |
+| Permission or ownership failure | `EACCES` |
+| Provider unavailable, provider disconnected, or internal I/O failure | `EIO` |
+| Timeout | `ETIMEDOUT` |
+| Cancellation | `ECANCELED` |
+
+When a provider connection closes, daemon-owned promises that still depend on
+that provider are marked provider-gone unless they are completely materialized
+or can be satisfied by a future cache policy. Reads and materialize operations
+for provider-gone promises fail deterministically with `FP_ERR_PROVIDER_GONE`
+through the public C ABI and `EIO` through FUSE reads.
+
 ## API Sketch
 
 This API is an initial implementation surface, not a frozen stable ABI.

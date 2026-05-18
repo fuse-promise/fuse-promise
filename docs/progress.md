@@ -55,7 +55,9 @@ plugins, or application-specific integrations.
   directory subtrees through private daemon IPC using the provider read path.
 - [x] `fp_promise_commit()` has FFI coverage for the commit-ready success path
   returning `$XDG_RUNTIME_DIR/fuse-promise/<promise-id>`.
-- [x] Basic Rust and C header verification passes.
+- [x] Public ABI verifier covers header constants/layout, exported symbols,
+  panic boundaries, invalid arguments, generated pkg-config metadata, and C
+  example linking.
 
 Baseline verification:
 
@@ -63,6 +65,7 @@ Baseline verification:
 cargo fmt --check --all
 cargo check --workspace
 cargo test --workspace
+tests/abi-hardening.sh
 cc -Iinclude -x c -fsyntax-only -
 c++ -Iinclude -x c++ -fsyntax-only -
 ```
@@ -114,7 +117,7 @@ pass and one pushable commit.
 | [x] | 7 | Close G1.7 read-only MVP gate | End-to-end provider, commit, mount, inspect, lazy read, and disconnect behavior. | A provider-created tree is visible, metadata reads transfer no bytes, file reads route only requested ranges, and disconnect errors are deterministic. |
 | [x] | 8 | Start G2.1 single-file materialize | Private materialize IPC plus daemon file copy using the existing read path. | `fpctl materialize <promise-file> <target-dir>` writes matching file content and metadata. |
 | [x] | 9 | Add G2.2 directory materialize | Recursive tree walk, directory creation, child file materialize, metadata application. | `diff -r` matches an expected directory tree. |
-| [ ] | 10 | Harden G3 developer ABI | Header/constant/layout/symbol/panic tests and C examples. | Public ABI tests pass and examples link only through the public header and pkg-config metadata. |
+| [x] | 10 | Harden G3 developer ABI | Header/constant/layout/symbol/panic tests and C examples. | Public ABI tests pass and examples link only through the public header and pkg-config metadata. |
 
 ## Phase 0: Foundation
 
@@ -344,38 +347,39 @@ build against.
 
 ### G3.1 ABI Layout Tests
 
-- [ ] Test header/Rust constant consistency.
-- [ ] Test struct sizes, alignment, and field offsets.
-- [ ] Test public status and policy values.
-- [ ] Test public symbol exports only expose intended `fp_` functions.
-- [ ] Test panic safety for every public entrypoint.
-- [ ] Test null pointer, bad `struct_size`, and version mismatch behavior.
+- [x] Test header/Rust constant consistency.
+- [x] Test struct sizes, alignment, and field offsets.
+- [x] Test public status and policy values.
+- [x] Test public symbol exports only expose intended `fp_` functions.
+- [x] Test panic safety for every public entrypoint.
+- [x] Test null pointer, bad `struct_size`, and version mismatch behavior.
 
 Suggested verification:
 
 ```sh
 cargo build -p fuse-promise-ffi --locked
 nm -D --defined-only target/debug/libfusepromise.so
+tests/abi-hardening.sh
 ```
 
 ### G3.2 Public Error Documentation
 
-- [ ] Document every `fp_status_t` value.
-- [ ] Document filesystem `errno` mappings.
-- [ ] Document provider disconnect behavior.
-- [ ] Document timeout and cancellation behavior.
+- [x] Document every `fp_status_t` value.
+- [x] Document filesystem `errno` mappings.
+- [x] Document provider disconnect behavior.
+- [x] Document timeout and cancellation behavior.
 
 ### G3.3 Public C Examples
 
-- [ ] Add a minimal C provider example.
-- [ ] Add a C materialize example after Phase 2.
-- [ ] Ensure examples include only `fuse-promise/fuse-promise.h`.
-- [ ] Ensure examples link only through `pkg-config --cflags --libs
+- [x] Add a minimal C provider example.
+- [x] Add a C materialize example after Phase 2.
+- [x] Ensure examples include only `fuse-promise/fuse-promise.h`.
+- [x] Ensure examples link only through `pkg-config --cflags --libs
   fuse-promise`.
 
 ### G3.4 Install Metadata
 
-- [ ] Generate `fuse-promise.pc` from `pkgconfig/fuse-promise.pc.in`.
+- [x] Generate `fuse-promise.pc` from `pkgconfig/fuse-promise.pc.in`.
 - [ ] Install public header.
 - [ ] Install `libfusepromise.so`.
 - [ ] Define soname/version policy.

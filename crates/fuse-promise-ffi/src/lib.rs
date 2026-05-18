@@ -757,6 +757,161 @@ mod tests {
     }
 
     #[test]
+    fn public_abi_constants_and_layout_match_header() {
+        assert_eq!(API_VERSION, 1);
+        assert_eq!(std::mem::size_of::<fp_status_t>(), 4);
+        assert_eq!(FP_OK, 0);
+        assert_eq!(FP_ERR_INVALID_ARGUMENT, 1);
+        assert_eq!(FP_ERR_UNAVAILABLE, 2);
+        assert_eq!(FP_ERR_PERMISSION, 3);
+        assert_eq!(FP_ERR_NOT_FOUND, 4);
+        assert_eq!(FP_ERR_ALREADY_EXISTS, 5);
+        assert_eq!(FP_ERR_PROVIDER_GONE, 6);
+        assert_eq!(FP_ERR_IO, 7);
+        assert_eq!(FP_ERR_TIMEOUT, 8);
+        assert_eq!(FP_ERR_CANCELLED, 9);
+        assert_eq!(FP_ERR_VERSION_MISMATCH, 10);
+        assert_eq!(FP_CONFLICT_FAIL, 0);
+        assert_eq!(FP_CONFLICT_OVERWRITE, 1);
+        assert_eq!(FP_CONFLICT_RENAME, 2);
+
+        assert_eq!(std::mem::size_of::<fp_context_options_t>(), 16);
+        assert_eq!(std::mem::align_of::<fp_context_options_t>(), 8);
+        assert_eq!(std::mem::offset_of!(fp_context_options_t, struct_size), 0);
+        assert_eq!(std::mem::offset_of!(fp_context_options_t, api_version), 4);
+        assert_eq!(std::mem::offset_of!(fp_context_options_t, runtime_dir), 8);
+
+        assert_eq!(std::mem::size_of::<fp_read_request_t>(), 40);
+        assert_eq!(std::mem::align_of::<fp_read_request_t>(), 8);
+        assert_eq!(std::mem::offset_of!(fp_read_request_t, promise_id), 0);
+        assert_eq!(std::mem::offset_of!(fp_read_request_t, node_id), 8);
+        assert_eq!(std::mem::offset_of!(fp_read_request_t, relative_path), 16);
+        assert_eq!(std::mem::offset_of!(fp_read_request_t, offset), 24);
+        assert_eq!(std::mem::offset_of!(fp_read_request_t, length), 32);
+
+        assert_eq!(std::mem::size_of::<fp_read_response_t>(), 24);
+        assert_eq!(std::mem::align_of::<fp_read_response_t>(), 8);
+        assert_eq!(std::mem::offset_of!(fp_read_response_t, buffer), 0);
+        assert_eq!(std::mem::offset_of!(fp_read_response_t, buffer_len), 8);
+        assert_eq!(std::mem::offset_of!(fp_read_response_t, bytes_written), 16);
+
+        assert_eq!(std::mem::size_of::<fp_provider_ops_t>(), 16);
+        assert_eq!(std::mem::align_of::<fp_provider_ops_t>(), 8);
+        assert_eq!(std::mem::offset_of!(fp_provider_ops_t, struct_size), 0);
+        assert_eq!(std::mem::offset_of!(fp_provider_ops_t, read), 8);
+
+        assert_eq!(std::mem::size_of::<fp_node_attr_t>(), 24);
+        assert_eq!(std::mem::align_of::<fp_node_attr_t>(), 8);
+        assert_eq!(std::mem::offset_of!(fp_node_attr_t, struct_size), 0);
+        assert_eq!(std::mem::offset_of!(fp_node_attr_t, mode), 4);
+        assert_eq!(std::mem::offset_of!(fp_node_attr_t, size), 8);
+        assert_eq!(std::mem::offset_of!(fp_node_attr_t, mtime_nsec), 16);
+
+        assert_eq!(std::mem::size_of::<fp_materialize_options_t>(), 8);
+        assert_eq!(std::mem::align_of::<fp_materialize_options_t>(), 4);
+        assert_eq!(
+            std::mem::offset_of!(fp_materialize_options_t, struct_size),
+            0
+        );
+        assert_eq!(
+            std::mem::offset_of!(fp_materialize_options_t, conflict_policy),
+            4
+        );
+    }
+
+    #[test]
+    fn public_entrypoints_reject_nulls_without_unwinding() {
+        let status_string =
+            std::panic::catch_unwind(|| fp_status_string(FP_ERR_INVALID_ARGUMENT)).unwrap();
+        assert!(!status_string.is_null());
+
+        assert_eq!(
+            std::panic::catch_unwind(|| unsafe {
+                fp_context_open(std::ptr::null(), std::ptr::null_mut())
+            })
+            .unwrap(),
+            FP_ERR_INVALID_ARGUMENT
+        );
+        assert!(
+            std::panic::catch_unwind(|| unsafe { fp_context_close(std::ptr::null_mut()) }).is_ok()
+        );
+        assert_eq!(
+            std::panic::catch_unwind(|| unsafe {
+                fp_provider_register(
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            })
+            .unwrap(),
+            FP_ERR_INVALID_ARGUMENT
+        );
+        assert!(std::panic::catch_unwind(|| unsafe {
+            fp_provider_unregister(std::ptr::null_mut())
+        })
+        .is_ok());
+        assert_eq!(
+            std::panic::catch_unwind(|| unsafe {
+                fp_promise_builder_new(
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            })
+            .unwrap(),
+            FP_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            std::panic::catch_unwind(|| unsafe {
+                fp_promise_add_dir(
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                )
+            })
+            .unwrap(),
+            FP_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            std::panic::catch_unwind(|| unsafe {
+                fp_promise_add_file(
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                )
+            })
+            .unwrap(),
+            FP_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            std::panic::catch_unwind(|| unsafe {
+                fp_promise_commit(std::ptr::null_mut(), std::ptr::null_mut(), 0)
+            })
+            .unwrap(),
+            FP_ERR_INVALID_ARGUMENT
+        );
+        assert!(std::panic::catch_unwind(|| unsafe {
+            fp_promise_builder_free(std::ptr::null_mut())
+        })
+        .is_ok());
+        assert_eq!(
+            std::panic::catch_unwind(|| unsafe {
+                fp_materialize(
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                )
+            })
+            .unwrap(),
+            FP_ERR_INVALID_ARGUMENT
+        );
+    }
+
+    #[test]
     fn promise_commit_unavailable_keeps_builder_retriable() {
         let provider_id = ProviderId::from_raw(1).unwrap();
         let mut pending_builder = PromiseBuilder::new(provider_id);
