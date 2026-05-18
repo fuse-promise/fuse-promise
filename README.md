@@ -10,6 +10,20 @@ local storage through materialize.
 This repository is a system component. It is not a storage provider, clipboard
 tool, desktop integration, cloud client, or transport layer.
 
+## Why This Exists
+
+Windows has platform APIs for this pattern:
+[Cloud Files API](https://learn.microsoft.com/windows/win32/cfapi/cloud-files-api-portal)
+for placeholder files, and
+[Projected File System](https://learn.microsoft.com/windows/win32/projfs/projected-file-system)
+for user-mode providers that project trees into the filesystem. macOS has
+[File Provider](https://developer.apple.com/documentation/fileprovider)
+and dataless files, where metadata can exist locally before content is
+materialized.
+
+Linux has FUSE, but not a common Promise-file runtime with a stable C ABI.
+`fuse-promise` provides that lower layer for Linux.
+
 ## Interface
 
 The public interface is the C ABI:
