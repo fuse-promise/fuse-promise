@@ -24,8 +24,9 @@ connections. The daemon has a feature-gated FUSE mount lifecycle skeleton
 behind the `fuse-mount` feature; default builds report `fuse_adapter=disabled`
 until the libfuse3 development dependency is present. Read-only FUSE operations
 and the materialize engine are still under development. Private metadata commit
-is gated on mount readiness so unmounted daemon state cannot create invisible
-promises. The public commit and materialize calls currently return
+is gated on commit readiness so disabled, unmounted, or mount-only daemon state
+cannot create invisible promises. The public commit and materialize calls
+currently return
 `FP_ERR_UNAVAILABLE` rather than claiming a visible FUSE path that does not
 exist yet.
 

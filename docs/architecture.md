@@ -398,10 +398,10 @@ The daemon owns mount lifecycle reporting. Default builds keep the FUSE adapter
 disabled so the workspace remains buildable without libfuse3 development
 packages; builds with the `fuse-mount` feature create the user-session
 mountpoint and hold the `fuser` background session handle for daemon lifetime.
-Private metadata commit checks this shared mount state before mutating the
-runtime. A mounted daemon state returns the future visible promise path; an
-unmounted or disabled daemon returns unavailable and leaves the runtime
-unchanged.
+Private metadata commit checks shared commit readiness before mutating the
+runtime. A commit-ready daemon state returns the future visible promise path;
+disabled, unmounted, or mount-only daemon state returns unavailable and leaves
+the runtime unchanged.
 
 ## Failure Model
 

@@ -30,8 +30,8 @@ plugins, or application-specific integrations.
 - [x] `fuse-promised --foreground` serves the private status IPC socket.
 - [x] Private IPC can register and unregister daemon-owned provider sessions.
 - [x] Private IPC can commit metadata snapshots into the daemon-owned runtime.
-- [x] Private metadata commit is gated on mount readiness and rejects disabled
-  or unmounted daemon state before mutating runtime.
+- [x] Private metadata commit is gated on commit readiness and rejects disabled,
+  unmounted, or mount-only daemon state before mutating runtime.
 - [x] Private IPC has bounded provider read request/response message helpers.
 - [x] Private IPC propagates provider disconnect on provider connection close.
 - [x] `libfusepromise.so` provider registration uses private daemon IPC.
@@ -46,8 +46,8 @@ plugins, or application-specific integrations.
   group/other-accessible `XDG_RUNTIME_DIR` paths.
 - [x] `fpctl status` queries the daemon when connected and falls back to
   `daemon=not-connected` when disconnected.
-- [x] `fp_promise_commit()` and `fp_materialize()` return
-  `FP_ERR_UNAVAILABLE` until daemon commit/read/materialize IPC and FUSE exist.
+- [x] `fp_promise_commit()` is gated on daemon commit readiness and
+  `fp_materialize()` returns `FP_ERR_UNAVAILABLE` until materialize IPC exists.
 - [x] Basic Rust and C header verification passes.
 
 Baseline verification:
@@ -173,7 +173,7 @@ Acceptance:
 
 ### G1.4 Metadata Commit
 
-- [~] Serialize builder metadata through private IPC.
+- [x] Serialize builder metadata through private IPC.
 - [x] Validate normalized relative paths in the daemon.
 - [~] Validate node type, permission bits, file size, mtime, duplicate paths,
   and parent directories.

@@ -276,6 +276,14 @@ impl PromiseBuilder {
             children: self.children,
         }
     }
+
+    pub fn provider_id(&self) -> ProviderId {
+        self.provider_id
+    }
+
+    pub fn nodes(&self) -> impl Iterator<Item = &PromiseNode> {
+        self.nodes.values()
+    }
 }
 
 #[derive(Debug, Default)]

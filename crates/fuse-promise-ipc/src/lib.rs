@@ -1,6 +1,6 @@
 use bincode::{Decode, Encode};
 use fuse_promise_runtime::{
-    default_control_socket_path, default_mount_path, normalize_relative_path, NodeAttr,
+    default_control_socket_path, default_mount_path, normalize_relative_path, NodeAttr, NodeKind,
     PromiseBuilder, Runtime, Status, API_VERSION,
 };
 use std::fmt::Write as _;
@@ -91,6 +91,15 @@ impl IpcMountStatus {
     }
 
     pub fn mounted(mount_path: PathBuf) -> Self {
+        Self {
+            mount: "mounted",
+            fuse_adapter: "enabled",
+            mount_path: Some(mount_path),
+            ready_for_commits: false,
+        }
+    }
+
+    pub fn commit_ready(mount_path: PathBuf) -> Self {
         Self {
             mount: "mounted",
             fuse_adapter: "enabled",
@@ -1150,6 +1159,29 @@ fn status_to_error_code(status: Status) -> ErrorCode {
 }
 
 impl PromiseCommitRequest {
+    pub fn from_builder(builder: &PromiseBuilder) -> Self {
+        Self {
+            provider_id: builder.provider_id().raw(),
+            nodes: builder
+                .nodes()
+                .filter(|node| !node.relative_path.is_empty())
+                .map(|node| PromiseNodeSpec {
+                    kind: match node.kind {
+                        NodeKind::File => PromiseNodeKind::File,
+                        NodeKind::Directory => PromiseNodeKind::Directory,
+                    },
+                    relative_path: node.relative_path.clone(),
+                    provider_node_id: node.provider_node_id.clone(),
+                    attr: PromiseNodeAttr {
+                        mode: node.attr.mode,
+                        size: node.attr.size,
+                        mtime_nsec: node.attr.mtime_nsec,
+                    },
+                })
+                .collect(),
+        }
+    }
+
     fn into_body(self) -> PromiseCommitBody {
         PromiseCommitBody {
             provider_id: self.provider_id,
@@ -1941,6 +1973,31 @@ mod tests {
     }
 
     #[test]
+    fn promise_commit_request_from_builder_omits_root_node() {
+        let provider_id = fuse_promise_runtime::ProviderId::from_raw(7).unwrap();
+        let mut builder = PromiseBuilder::new(provider_id);
+        builder
+            .add_dir("docs", NodeAttr::new(0o755, 0, 0), "remote-dir-1")
+            .unwrap();
+        builder
+            .add_file(
+                "docs/readme.txt",
+                NodeAttr::new(0o644, 12, 123),
+                "remote-file-1",
+            )
+            .unwrap();
+
+        let request = PromiseCommitRequest::from_builder(&builder);
+
+        assert_eq!(request.provider_id, 7);
+        assert_eq!(request.nodes.len(), 2);
+        assert_eq!(request.nodes[0].kind, PromiseNodeKind::Directory);
+        assert_eq!(request.nodes[0].relative_path, "docs");
+        assert_eq!(request.nodes[1].kind, PromiseNodeKind::File);
+        assert_eq!(request.nodes[1].relative_path, "docs/readme.txt");
+    }
+
+    #[test]
     fn provider_read_messages_round_trip() {
         let request = sample_read_request();
         let mut frame = Vec::new();
@@ -2044,7 +2101,9 @@ mod tests {
     fn mounted_state(runtime: Arc<Mutex<Runtime>>) -> IpcState {
         let state = IpcState::new(runtime);
         state
-            .set_mount_status(IpcMountStatus::mounted(PathBuf::from("/tmp/fuse-promise")))
+            .set_mount_status(IpcMountStatus::commit_ready(PathBuf::from(
+                "/tmp/fuse-promise",
+            )))
             .unwrap();
         state
     }

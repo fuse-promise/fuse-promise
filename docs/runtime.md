@@ -159,12 +159,12 @@ The current daemon reports mount state through the same private status IPC.
 Default builds keep the adapter disabled; enabling the daemon's `fuse-mount`
 feature starts the `fuser` background session and keeps its handle alive for
 the daemon lifetime. Private metadata commit uses this state as a readiness
-gate: disabled or unmounted daemons reject commit before mutating runtime
-state, while a mounted daemon state can return
+gate: disabled, unmounted, or mount-only daemons reject commit before mutating
+runtime state, while a commit-ready daemon state can return
 `$XDG_RUNTIME_DIR/fuse-promise/<promise-id>`.
 
-Until daemon IPC and the FUSE mount exist, public commit and materialize calls
-should return `FP_ERR_UNAVAILABLE`.
+Until a commit-ready FUSE namespace and materialize IPC exist, public commit
+and materialize calls should return `FP_ERR_UNAVAILABLE`.
 
 ## Materialize Runtime Flow
 

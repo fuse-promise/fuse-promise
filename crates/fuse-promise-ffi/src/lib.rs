@@ -1,8 +1,8 @@
 #![allow(non_camel_case_types)]
 
 use fuse_promise_ipc::{
-    connect_provider, ProviderConnection, ProviderReadRequest, ProviderReadResponse,
-    ProviderReadStatus,
+    commit_promise, connect_provider, PromiseCommitRequest, ProviderConnection,
+    ProviderReadRequest, ProviderReadResponse, ProviderReadStatus,
 };
 use fuse_promise_runtime::{
     default_control_socket_path, default_mount_path, validate_runtime_dir_path, NodeAttr,
@@ -102,6 +102,7 @@ pub struct fp_provider {
 }
 
 pub struct fp_promise_builder {
+    inner: Arc<ContextInner>,
     builder: Mutex<Option<PromiseBuilder>>,
 }
 
@@ -236,6 +237,7 @@ pub unsafe extern "C" fn fp_promise_builder_new(
         let provider_id = (*provider).id;
 
         let builder = fp_promise_builder {
+            inner: (*context).inner.clone(),
             builder: Mutex::new(Some(PromiseBuilder::new(provider_id))),
         };
 
@@ -307,11 +309,22 @@ pub unsafe extern "C" fn fp_promise_commit(
         }
         *out_path = 0;
 
-        if builder.builder.lock().map_err(|_| FP_ERR_IO)?.is_none() {
+        if !commit_path_capacity_fits(&builder.inner._mount_path, out_path_len) {
             return Err(FP_ERR_INVALID_ARGUMENT);
         }
 
-        Ok(FP_ERR_UNAVAILABLE)
+        let mut guard = builder.builder.lock().map_err(|_| FP_ERR_IO)?;
+        let Some(inner_builder) = guard.as_ref() else {
+            return Err(FP_ERR_INVALID_ARGUMENT);
+        };
+
+        let request = PromiseCommitRequest::from_builder(inner_builder);
+        let response = commit_promise(&builder.inner.socket_path, request).map_err(io_to_ffi)?;
+        let visible_path = response.visible_path.to_string_lossy();
+        write_c_string(out_path, out_path_len, visible_path.as_ref())?;
+        *guard = None;
+
+        Ok(FP_OK)
     })
 }
 
@@ -539,6 +552,26 @@ unsafe fn materialize_options(options: *const fp_materialize_options_t) -> Resul
     }
 }
 
+fn commit_path_capacity_fits(mount_path: &std::path::Path, out_path_len: usize) -> bool {
+    const MAX_PROMISE_ID: &str = "promise-18446744073709551615";
+    let max_path = mount_path.join(MAX_PROMISE_ID);
+    out_path_len > max_path.to_string_lossy().len()
+}
+
+unsafe fn write_c_string(
+    out_path: *mut c_char,
+    out_path_len: usize,
+    value: &str,
+) -> Result<(), fp_status_t> {
+    if value.as_bytes().contains(&0) || value.len() >= out_path_len {
+        return Err(FP_ERR_INVALID_ARGUMENT);
+    }
+
+    ptr::copy_nonoverlapping(value.as_ptr(), out_path.cast::<u8>(), value.len());
+    *out_path.add(value.len()) = 0;
+    Ok(())
+}
+
 unsafe fn builder_mut<'a>(
     builder: *mut fp_promise_builder,
 ) -> Result<&'a fp_promise_builder, fp_status_t> {
@@ -667,6 +700,38 @@ mod tests {
         assert_eq!(response.bytes, b"abc");
 
         helper.shutdown();
+    }
+
+    #[test]
+    fn promise_commit_unavailable_keeps_builder_retriable() {
+        let provider_id = ProviderId::from_raw(1).unwrap();
+        let mut pending_builder = PromiseBuilder::new(provider_id);
+        pending_builder
+            .add_dir("docs", NodeAttr::new(0o755, 0, 0), "remote-dir-1")
+            .unwrap();
+        pending_builder
+            .add_file(
+                "docs/readme.txt",
+                NodeAttr::new(0o644, 12, 0),
+                "remote-file-1",
+            )
+            .unwrap();
+        let inner = Arc::new(ContextInner {
+            socket_path: std::env::temp_dir().join("fuse-promise-missing.sock"),
+            _mount_path: PathBuf::from("/tmp/fuse-promise"),
+        });
+        let mut builder = fp_promise_builder {
+            inner,
+            builder: Mutex::new(Some(pending_builder)),
+        };
+        let mut out_path = [1_i8; 512];
+
+        let status =
+            unsafe { fp_promise_commit(&mut builder, out_path.as_mut_ptr(), out_path.len()) };
+
+        assert_eq!(status, FP_ERR_UNAVAILABLE);
+        assert_eq!(out_path[0], 0);
+        assert!(builder.builder.lock().unwrap().is_some());
     }
 
     fn sample_read_request() -> ProviderReadRequest {
