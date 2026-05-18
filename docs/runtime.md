@@ -122,9 +122,9 @@ Minimum IPC operations:
 - Materialize start, progress, cancellation, and result.
 
 The current implementation provides runtime status, provider
-register/unregister messages, and Promise metadata commit over a bounded framed
-protocol on a private Unix socket. Other IPC operations are still under
-development.
+register/unregister messages, Promise metadata commit, and provider read
+request/response message helpers over a bounded framed protocol on private Unix
+sockets. Read routing and other IPC operations are still under development.
 
 ## Lifecycle
 

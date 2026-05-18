@@ -366,9 +366,10 @@ IPC messages must validate size, version, provider ownership, path bounds, read
 ranges, and target paths before mutating daemon state.
 
 The current implementation includes bounded framed status, provider
-register/unregister, and Promise metadata commit IPC over a private Unix socket.
-Read routing and materialize IPC are still Phase 1/Phase 2 work and must remain
-private to `libfusepromise.so` and `fuse-promised`.
+register/unregister, Promise metadata commit IPC, and provider read
+request/response message helpers over private Unix sockets. Read routing and
+materialize IPC are still Phase 1/Phase 2 work and must remain private to
+`libfusepromise.so` and `fuse-promised`.
 
 ## Failure Model
 

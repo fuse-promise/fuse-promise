@@ -1,7 +1,7 @@
 use bincode::{Decode, Encode};
 use fuse_promise_runtime::{
-    default_control_socket_path, default_mount_path, NodeAttr, PromiseBuilder, Runtime, Status,
-    API_VERSION,
+    default_control_socket_path, default_mount_path, normalize_relative_path, NodeAttr,
+    PromiseBuilder, Runtime, Status, API_VERSION,
 };
 use std::fmt::Write as _;
 use std::fs;
@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 pub const IPC_PROTOCOL_VERSION: u32 = 1;
 pub const MAX_FRAME_LEN: u32 = 1024 * 1024;
+pub const MAX_PROVIDER_READ_LEN: u32 = 256 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DaemonStatus {
@@ -114,6 +115,42 @@ struct PromiseCommittedBody {
     promise_id: String,
 }
 
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
+enum ProviderReadMessage {
+    Request(ProviderReadRequestBody),
+    Response(ProviderReadResponseBody),
+}
+
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
+struct ProviderReadRequestBody {
+    request_id: u64,
+    provider_id: u64,
+    promise_id: String,
+    relative_path: String,
+    provider_node_id: String,
+    offset: u64,
+    length: u32,
+}
+
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
+struct ProviderReadResponseBody {
+    request_id: u64,
+    status: ProviderReadStatusBody,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, Encode, Decode, PartialEq, Eq)]
+enum ProviderReadStatusBody {
+    Ok,
+    InvalidArgument,
+    Permission,
+    NotFound,
+    ProviderGone,
+    Io,
+    Timeout,
+    Cancelled,
+}
+
 impl StatusBody {
     fn from_status(status: &DaemonStatus) -> Self {
         Self {
@@ -196,6 +233,36 @@ pub struct PromiseCommitResponse {
     pub promise_id: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderReadRequest {
+    pub request_id: u64,
+    pub provider_id: u64,
+    pub promise_id: String,
+    pub relative_path: String,
+    pub provider_node_id: String,
+    pub offset: u64,
+    pub length: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderReadResponse {
+    pub request_id: u64,
+    pub status: ProviderReadStatus,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderReadStatus {
+    Ok,
+    InvalidArgument,
+    Permission,
+    NotFound,
+    ProviderGone,
+    Io,
+    Timeout,
+    Cancelled,
+}
+
 pub fn query_status(socket_path: &Path) -> io::Result<String> {
     let mut stream = connect_and_hello(socket_path)?;
 
@@ -251,6 +318,78 @@ pub fn commit_promise(
             "daemon returned an unexpected promise commit response",
         )),
     }
+}
+
+pub fn write_provider_read_request<W>(
+    writer: &mut W,
+    request: &ProviderReadRequest,
+) -> io::Result<()>
+where
+    W: Write,
+{
+    write_frame(
+        writer,
+        &ProviderReadMessage::Request(request.clone().into_body()?),
+    )
+}
+
+pub fn read_provider_read_request<R>(reader: &mut R) -> io::Result<Option<ProviderReadRequest>>
+where
+    R: Read,
+{
+    match read_frame::<_, ProviderReadMessage>(reader)? {
+        Some(ProviderReadMessage::Request(request)) => {
+            ProviderReadRequest::from_body(request).map(Some)
+        }
+        Some(ProviderReadMessage::Response(_)) => Err(invalid_data(
+            "provider read response received where request was expected",
+        )),
+        None => Ok(None),
+    }
+}
+
+pub fn write_provider_read_response<W>(
+    writer: &mut W,
+    response: &ProviderReadResponse,
+) -> io::Result<()>
+where
+    W: Write,
+{
+    write_frame(
+        writer,
+        &ProviderReadMessage::Response(response.clone().into_body()?),
+    )
+}
+
+pub fn read_provider_read_response<R>(reader: &mut R) -> io::Result<Option<ProviderReadResponse>>
+where
+    R: Read,
+{
+    match read_frame::<_, ProviderReadMessage>(reader)? {
+        Some(ProviderReadMessage::Response(response)) => {
+            ProviderReadResponse::from_body(response).map(Some)
+        }
+        Some(ProviderReadMessage::Request(_)) => Err(invalid_data(
+            "provider read request received where response was expected",
+        )),
+        None => Ok(None),
+    }
+}
+
+pub fn validate_provider_read_response_for_request(
+    request: &ProviderReadRequest,
+    response: &ProviderReadResponse,
+) -> io::Result<()> {
+    if response.request_id != request.request_id {
+        return Err(invalid_data("provider read response id mismatch"));
+    }
+    if response.status == ProviderReadStatus::Ok && response.bytes.len() > request.length as usize {
+        return Err(invalid_data(
+            "provider read response exceeds requested length",
+        ));
+    }
+
+    response.validate()
 }
 
 fn connect_and_hello(socket_path: &Path) -> io::Result<UnixStream> {
@@ -612,6 +751,168 @@ impl PromiseNodeSpec {
     }
 }
 
+impl ProviderReadRequest {
+    fn into_body(self) -> io::Result<ProviderReadRequestBody> {
+        let normalized_path = validate_relative_path(&self.relative_path)?;
+        validate_nonzero("provider read request id", self.request_id)?;
+        validate_provider_id(self.provider_id)?;
+        validate_token("promise id", &self.promise_id)?;
+        validate_token("provider node id", &self.provider_node_id)?;
+        validate_read_range(self.offset, self.length)?;
+
+        Ok(ProviderReadRequestBody {
+            request_id: self.request_id,
+            provider_id: self.provider_id,
+            promise_id: self.promise_id,
+            relative_path: normalized_path,
+            provider_node_id: self.provider_node_id,
+            offset: self.offset,
+            length: self.length,
+        })
+    }
+
+    fn from_body(body: ProviderReadRequestBody) -> io::Result<Self> {
+        ProviderReadRequest {
+            request_id: body.request_id,
+            provider_id: body.provider_id,
+            promise_id: body.promise_id,
+            relative_path: body.relative_path,
+            provider_node_id: body.provider_node_id,
+            offset: body.offset,
+            length: body.length,
+        }
+        .validated()
+    }
+
+    fn validated(self) -> io::Result<Self> {
+        let body = self.clone().into_body()?;
+        Ok(Self {
+            request_id: body.request_id,
+            provider_id: body.provider_id,
+            promise_id: body.promise_id,
+            relative_path: body.relative_path,
+            provider_node_id: body.provider_node_id,
+            offset: body.offset,
+            length: body.length,
+        })
+    }
+}
+
+impl ProviderReadResponse {
+    fn into_body(self) -> io::Result<ProviderReadResponseBody> {
+        self.validate()?;
+
+        Ok(ProviderReadResponseBody {
+            request_id: self.request_id,
+            status: self.status.into_body(),
+            bytes: self.bytes,
+        })
+    }
+
+    fn from_body(body: ProviderReadResponseBody) -> io::Result<Self> {
+        ProviderReadResponse {
+            request_id: body.request_id,
+            status: ProviderReadStatus::from_body(body.status),
+            bytes: body.bytes,
+        }
+        .validated()
+    }
+
+    fn validated(self) -> io::Result<Self> {
+        self.validate()?;
+        Ok(self)
+    }
+
+    fn validate(&self) -> io::Result<()> {
+        validate_nonzero("provider read response id", self.request_id)?;
+        if self.bytes.len() > MAX_PROVIDER_READ_LEN as usize {
+            return Err(invalid_data(
+                "provider read response exceeds maximum read length",
+            ));
+        }
+        if self.status != ProviderReadStatus::Ok && !self.bytes.is_empty() {
+            return Err(invalid_data(
+                "provider read error response must not include bytes",
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+impl ProviderReadStatus {
+    fn into_body(self) -> ProviderReadStatusBody {
+        match self {
+            ProviderReadStatus::Ok => ProviderReadStatusBody::Ok,
+            ProviderReadStatus::InvalidArgument => ProviderReadStatusBody::InvalidArgument,
+            ProviderReadStatus::Permission => ProviderReadStatusBody::Permission,
+            ProviderReadStatus::NotFound => ProviderReadStatusBody::NotFound,
+            ProviderReadStatus::ProviderGone => ProviderReadStatusBody::ProviderGone,
+            ProviderReadStatus::Io => ProviderReadStatusBody::Io,
+            ProviderReadStatus::Timeout => ProviderReadStatusBody::Timeout,
+            ProviderReadStatus::Cancelled => ProviderReadStatusBody::Cancelled,
+        }
+    }
+
+    fn from_body(body: ProviderReadStatusBody) -> Self {
+        match body {
+            ProviderReadStatusBody::Ok => ProviderReadStatus::Ok,
+            ProviderReadStatusBody::InvalidArgument => ProviderReadStatus::InvalidArgument,
+            ProviderReadStatusBody::Permission => ProviderReadStatus::Permission,
+            ProviderReadStatusBody::NotFound => ProviderReadStatus::NotFound,
+            ProviderReadStatusBody::ProviderGone => ProviderReadStatus::ProviderGone,
+            ProviderReadStatusBody::Io => ProviderReadStatus::Io,
+            ProviderReadStatusBody::Timeout => ProviderReadStatus::Timeout,
+            ProviderReadStatusBody::Cancelled => ProviderReadStatus::Cancelled,
+        }
+    }
+}
+
+fn validate_nonzero(name: &str, value: u64) -> io::Result<()> {
+    if value == 0 {
+        Err(invalid_data(&format!("{name} must be nonzero")))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_provider_id(provider_id: u64) -> io::Result<()> {
+    if fuse_promise_runtime::ProviderId::from_raw(provider_id).is_some() {
+        Ok(())
+    } else {
+        Err(invalid_data("provider id must be nonzero"))
+    }
+}
+
+fn validate_token(name: &str, value: &str) -> io::Result<()> {
+    if value.is_empty() {
+        return Err(invalid_data(&format!("{name} must not be empty")));
+    }
+    if value.as_bytes().contains(&0) {
+        return Err(invalid_data(&format!("{name} must not contain NUL")));
+    }
+
+    Ok(())
+}
+
+fn validate_relative_path(path: &str) -> io::Result<String> {
+    normalize_relative_path(path).map_err(|status| invalid_data(status.as_str()))
+}
+
+fn validate_read_range(offset: u64, length: u32) -> io::Result<()> {
+    if length == 0 {
+        return Err(invalid_data("provider read length must be nonzero"));
+    }
+    if length > MAX_PROVIDER_READ_LEN {
+        return Err(invalid_data("provider read length exceeds maximum"));
+    }
+    if offset.checked_add(u64::from(length)).is_none() {
+        return Err(invalid_data("provider read range overflows"));
+    }
+
+    Ok(())
+}
+
 fn encode_error_to_io(error: bincode::error::EncodeError) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error.to_string())
 }
@@ -961,6 +1262,87 @@ mod tests {
         let _ = fs::remove_file(socket_path);
     }
 
+    #[test]
+    fn provider_read_messages_round_trip() {
+        let request = sample_read_request();
+        let mut frame = Vec::new();
+        write_provider_read_request(&mut frame, &request).unwrap();
+
+        let decoded = read_provider_read_request(&mut Cursor::new(frame))
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded.relative_path, "docs/readme.txt");
+        assert_eq!(decoded.length, 12);
+
+        let response = ProviderReadResponse {
+            request_id: decoded.request_id,
+            status: ProviderReadStatus::Ok,
+            bytes: b"hello".to_vec(),
+        };
+        validate_provider_read_response_for_request(&decoded, &response).unwrap();
+
+        let mut frame = Vec::new();
+        write_provider_read_response(&mut frame, &response).unwrap();
+        let decoded_response = read_provider_read_response(&mut Cursor::new(frame))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decoded_response, response);
+    }
+
+    #[test]
+    fn provider_read_request_rejects_invalid_ranges() {
+        let mut request = sample_read_request();
+        request.length = 0;
+        assert!(write_provider_read_request(&mut Vec::new(), &request).is_err());
+
+        let mut request = sample_read_request();
+        request.length = MAX_PROVIDER_READ_LEN + 1;
+        assert!(write_provider_read_request(&mut Vec::new(), &request).is_err());
+
+        let mut request = sample_read_request();
+        request.offset = u64::MAX;
+        assert!(write_provider_read_request(&mut Vec::new(), &request).is_err());
+    }
+
+    #[test]
+    fn provider_read_request_rejects_invalid_identity_fields() {
+        let mut request = sample_read_request();
+        request.request_id = 0;
+        assert!(write_provider_read_request(&mut Vec::new(), &request).is_err());
+
+        let mut request = sample_read_request();
+        request.provider_id = 0;
+        assert!(write_provider_read_request(&mut Vec::new(), &request).is_err());
+
+        let mut request = sample_read_request();
+        request.promise_id.clear();
+        assert!(write_provider_read_request(&mut Vec::new(), &request).is_err());
+
+        let mut request = sample_read_request();
+        request.relative_path = "../bad".to_owned();
+        assert!(write_provider_read_request(&mut Vec::new(), &request).is_err());
+    }
+
+    #[test]
+    fn provider_read_response_is_checked_against_request() {
+        let request = sample_read_request();
+        let mut response = ProviderReadResponse {
+            request_id: request.request_id + 1,
+            status: ProviderReadStatus::Ok,
+            bytes: b"hello".to_vec(),
+        };
+        assert!(validate_provider_read_response_for_request(&request, &response).is_err());
+
+        response.request_id = request.request_id;
+        response.bytes = vec![1; request.length as usize + 1];
+        assert!(validate_provider_read_response_for_request(&request, &response).is_err());
+
+        response.status = ProviderReadStatus::ProviderGone;
+        response.bytes = b"bad".to_vec();
+        assert!(write_provider_read_response(&mut Vec::new(), &response).is_err());
+    }
+
     fn send_hello(stream: &mut UnixStream) {
         write_frame(
             stream,
@@ -1017,6 +1399,18 @@ mod tests {
                     },
                 },
             ],
+        }
+    }
+
+    fn sample_read_request() -> ProviderReadRequest {
+        ProviderReadRequest {
+            request_id: 7,
+            provider_id: 1,
+            promise_id: "promise-1".to_owned(),
+            relative_path: "docs//readme.txt".to_owned(),
+            provider_node_id: "remote-file-1".to_owned(),
+            offset: 0,
+            length: 12,
         }
     }
 }

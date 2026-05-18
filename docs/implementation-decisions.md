@@ -173,8 +173,8 @@ Minimum message families:
 - `ProviderRegister`. Implemented as a private message.
 - `ProviderUnregister`. Implemented as a private message.
 - `PromiseCommit`. Implemented as private daemon-owned metadata commit.
-- `ProviderReadRequest`.
-- `ProviderReadResponse`.
+- `ProviderReadRequest`. Implemented as bounded private message helpers.
+- `ProviderReadResponse`. Implemented as bounded private message helpers.
 - `MaterializeStart`.
 - `MaterializeCancel`.
 - `MaterializeStatus`.
