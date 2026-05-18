@@ -6,6 +6,7 @@ version = 3
 name = "fpctl"
 version = "0.1.0"
 dependencies = [
+ "fuse-promise-ipc",
  "fuse-promise-runtime",
 ]
 
@@ -13,11 +14,19 @@ dependencies = [
 name = "fuse-promise-daemon"
 version = "0.1.0"
 dependencies = [
+ "fuse-promise-ipc",
  "fuse-promise-runtime",
 ]
 
 [[package]]
 name = "fuse-promise-ffi"
+version = "0.1.0"
+dependencies = [
+ "fuse-promise-runtime",
+]
+
+[[package]]
+name = "fuse-promise-ipc"
 version = "0.1.0"
 dependencies = [
  "fuse-promise-runtime",

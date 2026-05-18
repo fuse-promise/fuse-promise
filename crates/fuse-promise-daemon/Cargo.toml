@@ -11,4 +11,5 @@ name = "fuse-promised"
 path = "src/main.rs"
 
 [dependencies]
+fuse-promise-ipc = { path = "../fuse-promise-ipc" }
 fuse-promise-runtime = { path = "../fuse-promise-runtime" }

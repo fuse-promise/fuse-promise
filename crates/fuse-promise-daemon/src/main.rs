@@ -1,6 +1,8 @@
-use fuse_promise_runtime::default_mount_path;
+use fuse_promise_ipc::serve_status;
+use fuse_promise_runtime::{default_control_socket_path, default_mount_path, Runtime};
 use std::env;
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex};
 
 fn main() -> ExitCode {
     let mut foreground = false;
@@ -23,13 +25,26 @@ fn main() -> ExitCode {
         Ok(path) => {
             println!("fuse-promised");
             println!("mount_path={}", path.display());
+            match default_control_socket_path() {
+                Ok(socket_path) => println!("socket_path={}", socket_path.display()),
+                Err(status) => {
+                    eprintln!("fuse-promised: {}", status.as_str());
+                    return ExitCode::from(1);
+                }
+            }
             println!("status=not-mounted");
             println!("fuse_adapter=not-implemented");
             if foreground {
-                eprintln!("fuse-promised: FUSE adapter is not implemented");
-                ExitCode::from(1)
-            } else {
-                ExitCode::SUCCESS
+                println!("mode=foreground");
+            }
+
+            let runtime = Arc::new(Mutex::new(Runtime::new()));
+            match serve_status(runtime) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("fuse-promised: {error}");
+                    ExitCode::from(1)
+                }
             }
         }
         Err(status) => {
@@ -43,5 +58,5 @@ fn print_help() {
     println!("usage: fuse-promised [--foreground]");
     println!();
     println!("Starts the user-session Promise filesystem daemon.");
-    println!("The FUSE adapter is not implemented in this initial skeleton.");
+    println!("The current skeleton serves private status IPC only; FUSE is not implemented.");
 }

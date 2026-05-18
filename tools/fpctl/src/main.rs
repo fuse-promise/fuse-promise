@@ -1,4 +1,5 @@
-use fuse_promise_runtime::default_mount_path;
+use fuse_promise_ipc::query_status;
+use fuse_promise_runtime::{default_control_socket_path, default_mount_path};
 use std::env;
 use std::process::ExitCode;
 
@@ -26,17 +27,33 @@ fn main() -> ExitCode {
 }
 
 fn status() -> ExitCode {
-    match default_mount_path() {
-        Ok(path) => {
-            println!("runtime_dir={}", path.display());
-            println!("daemon=not-connected");
-            println!("mount=not-mounted");
-            ExitCode::SUCCESS
-        }
+    let socket_path = match default_control_socket_path() {
+        Ok(path) => path,
         Err(status) => {
             eprintln!("fpctl: {}", status.as_str());
-            ExitCode::from(1)
+            return ExitCode::from(1);
         }
+    };
+
+    match query_status(&socket_path) {
+        Ok(response) => {
+            print!("{response}");
+            ExitCode::SUCCESS
+        }
+        Err(_) => match default_mount_path() {
+            Ok(path) => {
+                println!("mount_path={}", path.display());
+                println!("socket_path={}", socket_path.display());
+                println!("daemon=not-connected");
+                println!("mount=not-mounted");
+                println!("fuse_adapter=not-implemented");
+                ExitCode::SUCCESS
+            }
+            Err(status) => {
+                eprintln!("fpctl: {}", status.as_str());
+                ExitCode::from(1)
+            }
+        },
     }
 }
 
@@ -44,5 +61,5 @@ fn print_help() {
     println!("usage: fpctl <command>");
     println!();
     println!("commands:");
-    println!("  status    Show the expected user-session runtime path");
+    println!("  status    Query the user-session daemon status");
 }

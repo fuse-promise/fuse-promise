@@ -365,6 +365,11 @@ Minimum private IPC capabilities:
 IPC messages must validate size, version, provider ownership, path bounds, read
 ranges, and target paths before mutating daemon state.
 
+The current implementation only includes a private Unix socket status command.
+Provider registration, commit, read routing, and materialize IPC are still Phase
+1/Phase 2 work and must remain private to `libfusepromise.so` and
+`fuse-promised`.
+
 ## Failure Model
 
 The runtime must produce deterministic failures for:

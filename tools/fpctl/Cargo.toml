@@ -11,4 +11,5 @@ name = "fpctl"
 path = "src/main.rs"
 
 [dependencies]
+fuse-promise-ipc = { path = "../../crates/fuse-promise-ipc" }
 fuse-promise-runtime = { path = "../../crates/fuse-promise-runtime" }

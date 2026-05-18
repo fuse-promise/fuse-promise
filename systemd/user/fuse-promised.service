@@ -3,8 +3,8 @@ Description=fuse-promise user-session daemon
 
 [Service]
 Type=simple
-# Placeholder template. Do not install until fuse-promised keeps a FUSE mount
-# alive; the current skeleton exits with failure in --foreground mode.
+# Placeholder template. The current skeleton serves private status IPC, but the
+# FUSE adapter is not implemented yet.
 ExecStart=/usr/bin/fuse-promised --foreground
 Restart=no
 

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/fuse-promise-runtime",
+    "crates/fuse-promise-ipc",
     "crates/fuse-promise-ffi",
     "crates/fuse-promise-daemon",
     "tools/fpctl",

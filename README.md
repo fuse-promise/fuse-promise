@@ -11,11 +11,12 @@ The project is a system component. It is not a clipboard application, a cloud cl
 This repository is in the early implementation phase.
 
 The current tree contains the public C header, Rust workspace skeleton, core
-Promise metadata model, C ABI entry points, and initial daemon and CLI entry
-points. The FUSE adapter, private daemon IPC, provider read routing, and
-materialize engine are still under development. The public commit and
-materialize calls currently return `FP_ERR_UNAVAILABLE` rather than claiming a
-visible FUSE path that does not exist yet.
+Promise metadata model, C ABI entry points, initial daemon and CLI entry
+points, and a private status IPC socket used by `fpctl status`. The FUSE
+adapter, commit/read IPC, provider read routing, and materialize engine are
+still under development. The public commit and materialize calls currently
+return `FP_ERR_UNAVAILABLE` rather than claiming a visible FUSE path that does
+not exist yet.
 
 The first implementation target is a read-only Promise filesystem MVP:
 
@@ -128,6 +129,7 @@ Those projects should live outside this repository and use the public API.
 ```text
 include/fuse-promise/fuse-promise.h  public C ABI
 crates/fuse-promise-runtime/         core Promise metadata model
+crates/fuse-promise-ipc/             private daemon IPC helpers
 crates/fuse-promise-ffi/             libfusepromise C ABI implementation
 crates/fuse-promise-daemon/          fuse-promised daemon entry point
 tools/fpctl/                         administrative CLI

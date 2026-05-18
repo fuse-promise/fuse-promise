@@ -324,6 +324,14 @@ impl Runtime {
     pub fn promises(&self) -> impl Iterator<Item = &PromiseTree> {
         self.promises.values()
     }
+
+    pub fn provider_count(&self) -> usize {
+        self.providers.len()
+    }
+
+    pub fn promise_count(&self) -> usize {
+        self.promises.len()
+    }
 }
 
 pub fn default_mount_path() -> Result<PathBuf> {
@@ -334,6 +342,16 @@ pub fn default_mount_path() -> Result<PathBuf> {
     validate_runtime_dir_path(&runtime_dir)?;
 
     Ok(runtime_dir.join("fuse-promise"))
+}
+
+pub fn default_control_socket_path() -> Result<PathBuf> {
+    let Some(runtime_dir) = env::var_os("XDG_RUNTIME_DIR") else {
+        return Err(Status::Unavailable);
+    };
+    let runtime_dir = PathBuf::from(runtime_dir);
+    validate_runtime_dir_path(&runtime_dir)?;
+
+    Ok(runtime_dir.join("fuse-promise.sock"))
 }
 
 pub fn validate_runtime_dir_path(runtime_dir: &Path) -> Result<()> {

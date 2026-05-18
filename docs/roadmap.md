@@ -16,7 +16,7 @@
 
 - Make `fuse-promised` the sole owner of runtime metadata, provider sessions,
   inode allocation, and mount state.
-- Add private library-to-daemon IPC.
+- Extend the private library-to-daemon IPC beyond the current status command.
 - Make `libfusepromise.so` connect to or start the daemon instead of owning an
   independent in-process runtime.
 - Make `fpctl` query the daemon through the same private runtime path.

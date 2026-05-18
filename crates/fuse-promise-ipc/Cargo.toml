@@ -1,0 +1,14 @@
+[package]
+name = "fuse-promise-ipc"
+description = "Private IPC helpers for fuse-promise"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[lib]
+name = "fuse_promise_ipc"
+path = "src/lib.rs"
+
+[dependencies]
+fuse-promise-runtime = { path = "../fuse-promise-runtime" }
