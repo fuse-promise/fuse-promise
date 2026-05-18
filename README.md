@@ -153,9 +153,11 @@ Those projects should live outside this repository and use the public API.
 - [Public API](docs/public-api.md)
 - [Runtime](docs/runtime.md)
 - [Security](docs/security.md)
+- [Packaging](docs/packaging.md)
 - [Development Style](docs/development-style.md)
 - [Roadmap](docs/roadmap.md)
 - [Progress Goals](docs/progress.md)
+- [Changelog](CHANGELOG.md)
 
 ## Source Layout
 

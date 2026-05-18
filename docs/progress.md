@@ -477,13 +477,19 @@ Acceptance:
 
 ### G5.3 Packaging
 
-- [ ] Package public header, shared library, pkg-config file, daemon, CLI, and
+- [x] Package public header, shared library, pkg-config file, daemon, CLI, and
   user service.
-- [ ] Provide distribution packaging guidelines.
-- [ ] Provide build instructions.
-- [ ] Provide changelog and release notes.
-- [ ] Document visible filesystem layout.
+- [x] Provide distribution packaging guidelines.
+- [x] Provide build instructions.
+- [x] Provide changelog and release notes.
+- [x] Document visible filesystem layout.
 - [ ] Prepare first stable ABI release.
+
+Suggested verification:
+
+```sh
+tests/install-metadata.sh
+```
 
 ## Cross-Cutting Verification Gates
 
