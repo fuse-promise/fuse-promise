@@ -126,7 +126,11 @@ setup_path="$visible_path/docs/guides/setup.txt"
 pending_path="$visible_path/pending.txt"
 
 XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" status \
-    | grep -q '^mount=mounted$' || fail "fpctl status did not report mounted"
+    > "$work_dir/status.out"
+grep -q '^mount=mounted$' "$work_dir/status.out" \
+    || fail "fpctl status did not report mounted"
+grep -q '^cache_policy=no-cache$' "$work_dir/status.out" \
+    || fail "fpctl status did not report no-cache policy"
 XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" list \
     | grep -q '^promises=1$' || fail "fpctl list did not report one promise"
 

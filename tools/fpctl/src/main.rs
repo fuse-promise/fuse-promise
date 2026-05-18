@@ -1,7 +1,7 @@
 use fuse_promise_ipc::{
     materialize_file, query_inspect, query_status, MaterializeConflictPolicy, MaterializeRequest,
 };
-use fuse_promise_runtime::{default_control_socket_path, default_mount_path};
+use fuse_promise_runtime::{default_control_socket_path, default_mount_path, CachePolicy};
 use std::env;
 use std::fs;
 use std::io;
@@ -162,6 +162,7 @@ fn status() -> ExitCode {
                 println!("daemon=not-connected");
                 println!("mount=not-mounted");
                 println!("fuse_adapter=not-implemented");
+                println!("cache_policy={}", CachePolicy::NoCache.as_str());
                 ExitCode::SUCCESS
             }
             Err(status) => {

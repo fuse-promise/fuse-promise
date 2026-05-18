@@ -54,6 +54,7 @@ For fixed implementation dependency and sequencing decisions, see
 
 ## Phase 4: Cache and Performance
 
+- Make the default no-cache policy explicit.
 - Add optional chunk cache.
 - Add sequential prefetch policy.
 - Add read coalescing.

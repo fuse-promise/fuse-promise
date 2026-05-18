@@ -355,7 +355,9 @@ profiling shows a real need.
 
 ## Cache Decision
 
-The first read-only MVP is no-cache.
+The first read-only MVP is no-cache. This is now an explicit runtime
+`CachePolicy::NoCache` value and is observable as `cache_policy=no-cache`
+through `fpctl status`.
 
 Later cache work must preserve visible Promise semantics:
 
@@ -363,7 +365,8 @@ Later cache work must preserve visible Promise semantics:
 - Partial cache is not enough to survive provider disconnect unless the
   requested range is fully cached.
 - Complete materialized content may satisfy future reads.
-- Cache policy must be observable through `fpctl`.
+- Cache policy must be observable through `fpctl`. Implemented for the current
+  no-cache default.
 - The default remains no-cache: provider-gone reads succeed only for complete
   materialized files until cache policy exists.
 

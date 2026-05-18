@@ -1,7 +1,7 @@
 use bincode::{Decode, Encode};
 use fuse_promise_runtime::{
-    default_control_socket_path, default_mount_path, normalize_relative_path, NodeAttr, NodeKind,
-    PromiseBuilder, PromiseNode, PromiseState, Runtime, Status, API_VERSION,
+    default_control_socket_path, default_mount_path, normalize_relative_path, CachePolicy,
+    NodeAttr, NodeKind, PromiseBuilder, PromiseNode, PromiseState, Runtime, Status, API_VERSION,
 };
 use std::fmt::Write as _;
 use std::fs;
@@ -31,6 +31,7 @@ pub struct DaemonStatus {
     pub daemon: &'static str,
     pub mount: &'static str,
     pub fuse_adapter: &'static str,
+    pub cache_policy: &'static str,
     pub providers: usize,
     pub promises: usize,
 }
@@ -56,6 +57,7 @@ impl DaemonStatus {
             daemon: "connected",
             mount: mount_status.mount,
             fuse_adapter: mount_status.fuse_adapter,
+            cache_policy: cache_policy_text(runtime.cache_policy()),
             providers: runtime.provider_count(),
             promises: runtime.promise_count(),
         })
@@ -201,6 +203,7 @@ struct StatusBody {
     daemon: String,
     mount: String,
     fuse_adapter: String,
+    cache_policy: String,
     providers: u64,
     promises: u64,
 }
@@ -328,6 +331,7 @@ impl StatusBody {
             daemon: status.daemon.to_owned(),
             mount: status.mount.to_owned(),
             fuse_adapter: status.fuse_adapter.to_owned(),
+            cache_policy: status.cache_policy.to_owned(),
             providers: status.providers as u64,
             promises: status.promises as u64,
         }
@@ -342,6 +346,7 @@ impl StatusBody {
         let _ = writeln!(output, "daemon={}", self.daemon);
         let _ = writeln!(output, "mount={}", self.mount);
         let _ = writeln!(output, "fuse_adapter={}", self.fuse_adapter);
+        let _ = writeln!(output, "cache_policy={}", self.cache_policy);
         let _ = writeln!(output, "providers={}", self.providers);
         let _ = writeln!(output, "promises={}", self.promises);
         output
@@ -2315,6 +2320,10 @@ fn promise_state_text(state: PromiseState) -> &'static str {
     }
 }
 
+fn cache_policy_text(policy: CachePolicy) -> &'static str {
+    policy.as_str()
+}
+
 fn node_kind_text(kind: NodeKind) -> &'static str {
     match kind {
         NodeKind::File => "file",
@@ -2356,6 +2365,7 @@ mod tests {
             daemon: "connected",
             mount: "not-mounted",
             fuse_adapter: "not-implemented",
+            cache_policy: "no-cache",
             providers: 2,
             promises: 3,
         };
@@ -2363,6 +2373,7 @@ mod tests {
         let encoded = status.encode();
         assert!(encoded.starts_with("ok\n"));
         assert!(encoded.contains("api_version=1\n"));
+        assert!(encoded.contains("cache_policy=no-cache\n"));
         assert!(encoded.contains("providers=2\n"));
         assert!(encoded.contains("promises=3\n"));
     }
@@ -2376,6 +2387,7 @@ mod tests {
             daemon: "connected".to_owned(),
             mount: "not-mounted".to_owned(),
             fuse_adapter: "not-implemented".to_owned(),
+            cache_policy: "no-cache".to_owned(),
             providers: 2,
             promises: 3,
         };
@@ -2433,6 +2445,7 @@ mod tests {
                 assert_eq!(status.providers, 1);
                 assert_eq!(status.promises, 0);
                 assert_eq!(status.daemon, "connected");
+                assert_eq!(status.cache_policy, "no-cache");
             }
             other => panic!("unexpected response: {other:?}"),
         }
@@ -2462,6 +2475,7 @@ mod tests {
             Response::Status(status) => {
                 assert_eq!(status.mount, "mounted");
                 assert_eq!(status.fuse_adapter, "enabled");
+                assert_eq!(status.cache_policy, "no-cache");
             }
             other => panic!("unexpected response: {other:?}"),
         }

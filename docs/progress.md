@@ -401,7 +401,7 @@ cc example.c $(pkg-config --cflags --libs fuse-promise)
 Goal: improve performance without changing visible Promise filesystem
 semantics.
 
-- [ ] Keep default no-cache behavior explicit.
+- [x] Keep default no-cache behavior explicit.
 - [ ] Add optional read-through chunk cache.
 - [ ] Track complete and incomplete byte ranges.
 - [ ] Add sequential prefetch.
@@ -415,6 +415,7 @@ Acceptance:
 - Random reads do not require full-file download.
 - Large tree creation remains metadata-only.
 - Materialize streams data without holding whole files in memory.
+- `fpctl status` reports `cache_policy=no-cache`.
 - Provider-gone reads succeed only for complete materialized content; cache
   remains unimplemented.
 

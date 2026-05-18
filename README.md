@@ -30,15 +30,17 @@ covers `fpctl status`, `fpctl list`, `find`, `ls`, `stat`, offset `dd`, `cat`,
 `cp`, file materialize, directory materialize, and provider-gone read errors.
 File and directory subtree materialize are implemented for the
 fail-on-conflict policy; overwrite/rename policies, progress, cancellation,
-and cache remain under development. Reads for completely materialized files can
-use the local materialized path after the provider disconnects. Private
-metadata commit is gated on commit readiness so disabled, unmounted, or
-mount-only daemon state cannot create invisible promises. `fp_promise_commit()`
-now routes through the daemon and can return a visible path only when the
-daemon reports a commit-ready FUSE namespace; default disabled or unmounted
-builds still return `FP_ERR_UNAVAILABLE`. `tests/abi-hardening.sh` verifies
-the public C ABI layout, exported symbols, invalid-argument behavior,
-generated pkg-config metadata, and public C example linking.
+and cache remain under development. The runtime exposes the current
+`cache_policy=no-cache` decision through `fpctl status`; reads for completely
+materialized files can use the local materialized path after the provider
+disconnects. Private metadata commit is gated on commit readiness so disabled,
+unmounted, or mount-only daemon state cannot create invisible promises.
+`fp_promise_commit()` now routes through the daemon and can return a visible
+path only when the daemon reports a commit-ready FUSE namespace; default
+disabled or unmounted builds still return `FP_ERR_UNAVAILABLE`.
+`tests/abi-hardening.sh` verifies the public C ABI layout, exported symbols,
+invalid-argument behavior, generated pkg-config metadata, and public C example
+linking.
 
 The first implementation target is a read-only Promise filesystem MVP:
 
@@ -47,8 +49,8 @@ The first implementation target is a read-only Promise filesystem MVP:
 - Support `stat`, `readdir`, `open`, and offset-based `read`.
 - Route reads to provider callbacks.
 
-Overwrite/rename conflict policies, progress reporting, cancellation, cache
-policy, and distribution packaging remain later phases.
+Overwrite/rename conflict policies, progress reporting, cancellation,
+read-through cache policy, and distribution packaging remain later phases.
 
 ## Why
 

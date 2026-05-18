@@ -111,6 +111,19 @@ pub enum PromiseState {
     Materialized,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CachePolicy {
+    NoCache,
+}
+
+impl CachePolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            CachePolicy::NoCache => "no-cache",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromiseNode {
     pub node_id: NodeId,
@@ -359,7 +372,7 @@ impl PromiseBuilder {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Runtime {
     next_provider_id: u64,
     next_promise_id: u64,
@@ -367,6 +380,13 @@ pub struct Runtime {
     next_inode: u64,
     providers: BTreeMap<ProviderId, ProviderSession>,
     promises: BTreeMap<String, PromiseTree>,
+    cache_policy: CachePolicy,
+}
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Runtime {
@@ -378,7 +398,12 @@ impl Runtime {
             next_inode: FUSE_ROOT_INODE + 1,
             providers: BTreeMap::new(),
             promises: BTreeMap::new(),
+            cache_policy: CachePolicy::NoCache,
         }
+    }
+
+    pub fn cache_policy(&self) -> CachePolicy {
+        self.cache_policy
     }
 
     pub fn register_provider(&mut self) -> ProviderId {
@@ -806,6 +831,12 @@ fn validate_attr(kind: NodeKind, attr: NodeAttr) -> Result<()> {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn runtime_defaults_to_explicit_no_cache_policy() {
+        assert_eq!(Runtime::new().cache_policy(), CachePolicy::NoCache);
+        assert_eq!(Runtime::default().cache_policy().as_str(), "no-cache");
+    }
 
     #[test]
     fn normalizes_safe_relative_paths() {

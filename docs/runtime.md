@@ -269,8 +269,9 @@ The runtime should eventually expose:
 - Mount state.
 - Materialize jobs.
 - Read error counters.
-- Cache usage.
+- Cache policy and usage.
 
 Observability should be available through `fpctl` and structured logs.
-`fpctl status` reports daemon and mount state. `fpctl list` reports
-daemon-owned providers, promises, and runtime nodes through private IPC.
+`fpctl status` reports daemon, mount state, and `cache_policy=no-cache`.
+`fpctl list` reports daemon-owned providers, promises, and runtime nodes through
+private IPC.

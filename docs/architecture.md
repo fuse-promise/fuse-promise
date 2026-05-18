@@ -150,7 +150,8 @@ Caching is an optimization, not a requirement for the public model.
 
 Possible cache modes:
 
-- No cache.
+- No cache. This is the current default and is reported as
+  `cache_policy=no-cache` by `fpctl status`.
 - Read-through chunk cache.
 - Materialized-file passthrough.
 - Provider-defined cache policy.

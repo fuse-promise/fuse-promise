@@ -87,9 +87,11 @@ for example in examples/minimal_provider.c examples/materialize.c; do
         || fail "$example does not depend on libfusepromise.so.0"
 done
 
-XDG_RUNTIME_DIR="$runtime_dir" "$prefix/bin/fpctl" status \
-    | grep -q '^daemon=not-connected$' \
+XDG_RUNTIME_DIR="$runtime_dir" "$prefix/bin/fpctl" status > "$work_dir/fpctl-status.out"
+grep -q '^daemon=not-connected$' "$work_dir/fpctl-status.out" \
     || fail "installed fpctl status did not run"
+grep -q '^cache_policy=no-cache$' "$work_dir/fpctl-status.out" \
+    || fail "installed fpctl status did not report no-cache policy"
 "$prefix/bin/fuse-promised" --help | grep -q '^usage: fuse-promised' \
     || fail "installed fuse-promised --help did not run"
 

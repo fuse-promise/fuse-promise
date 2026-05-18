@@ -38,7 +38,9 @@ fn main() -> ExitCode {
                 println!("mode=foreground");
             }
 
-            let runtime = Arc::new(Mutex::new(Runtime::new()));
+            let runtime = Runtime::new();
+            println!("cache_policy={}", runtime.cache_policy().as_str());
+            let runtime = Arc::new(Mutex::new(runtime));
             let ipc_state = IpcState::new(Arc::clone(&runtime));
             let fuse_mount = match fuse_adapter::start(&path, ipc_state.clone()) {
                 Ok(mount) => mount,
