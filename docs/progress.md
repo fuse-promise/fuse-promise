@@ -456,23 +456,24 @@ tests/read-only-mvp-smoke.sh
 
 ### G5.2 Compatibility Matrix
 
-- [ ] `open`
-- [ ] `stat`
-- [ ] `readdir`
-- [ ] `read`
-- [ ] `pread`
-- [ ] `ls`
-- [ ] `find`
-- [ ] `cat`
-- [ ] `cp`
-- [ ] `tar`
-- [ ] `rsync`
+- [x] `open`
+- [x] `stat`
+- [x] `readdir`
+- [x] `read`
+- [x] `pread`
+- [x] `ls`
+- [x] `find`
+- [x] `cat`
+- [x] `cp`
+- [x] `tar`
+- [x] `rsync`
 
 Acceptance:
 
 - Metadata-only operations do not transfer content.
 - Read-oriented tools trigger normal lazy reads.
 - Tools that force full reads behave according to normal filesystem semantics.
+- `tests/read-only-mvp-smoke.sh` covers this compatibility matrix.
 
 ### G5.3 Packaging
 

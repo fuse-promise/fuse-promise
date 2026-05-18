@@ -30,6 +30,8 @@ fail() {
 command -v cargo >/dev/null || skip "cargo is required"
 command -v cc >/dev/null || skip "cc is required"
 command -v mountpoint >/dev/null || skip "mountpoint is required"
+command -v rsync >/dev/null || skip "rsync is required"
+command -v tar >/dev/null || skip "tar is required"
 command -v fusermount3 >/dev/null || skip "fusermount3 is required"
 command -v "$pkg_config_bin" >/dev/null || skip "pkg-config is required"
 [ -e /dev/fuse ] || skip "/dev/fuse is required"
@@ -44,11 +46,15 @@ provider_out="$work_dir/provider.out"
 provider_err="$work_dir/provider.err"
 provider_bin="$work_dir/read-only-mvp-provider"
 provider_lib_dir="$work_dir/lib"
+pread_bin="$work_dir/pread-compat"
 expected_file="$work_dir/expected.txt"
 expected_tree="$work_dir/expected-tree"
 copy_file="$work_dir/copied.txt"
 materialize_dir="$work_dir/materialized"
 materialize_tree_dir="$work_dir/materialized-tree"
+rsync_dir="$work_dir/rsync-copy"
+tar_file="$work_dir/docs.tar"
+tar_extract_dir="$work_dir/tar-extract"
 daemon_pid=
 provider_pid=
 
@@ -72,7 +78,7 @@ trap cleanup EXIT
 mkdir -m 700 "$runtime_dir"
 mkdir "$provider_lib_dir"
 mkdir "$materialize_dir"
-mkdir -p "$expected_tree/docs/guides" "$expected_tree/docs/empty" "$materialize_tree_dir"
+mkdir -p "$expected_tree/docs/guides" "$expected_tree/docs/empty" "$materialize_tree_dir" "$rsync_dir/docs" "$tar_extract_dir"
 printf 'hello from fuse-promise\n' > "$expected_file"
 cp "$expected_file" "$expected_tree/docs/readme.txt"
 printf 'setup guide\n' > "$expected_tree/docs/guides/setup.txt"
@@ -89,6 +95,8 @@ cc -I"$repo_dir/include" "$repo_dir/tests/read_only_mvp_provider.c" \
     -L"$provider_lib_dir" -lfusepromise \
     "-Wl,-rpath,$provider_lib_dir" \
     -o "$provider_bin"
+cc -std=c11 -Wall -Wextra -Werror "$repo_dir/tests/pread_compat.c" \
+    -o "$pread_bin"
 
 XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fuse-promised" \
     --foreground > "$daemon_log" 2>&1 &
@@ -158,10 +166,20 @@ if grep -Eq '^READ offset=[0-5] ' "$read_log"; then
     fail "offset dd requested bytes before requested offset"
 fi
 
+"$pread_bin" "$setup_path" 7 4 uide
+grep -q '^READ offset=7 ' "$read_log" || fail "pread did not request offset 7"
+
 cat_output=$(cat "$file_path")
 [ "$cat_output" = "hello from fuse-promise" ] || fail "cat returned unexpected bytes"
 cp "$file_path" "$copy_file"
 cmp "$expected_file" "$copy_file" >/dev/null || fail "cp output did not match provider data"
+tar -C "$visible_path" -cf "$tar_file" docs
+tar -C "$tar_extract_dir" -xf "$tar_file"
+diff -r "$expected_tree/docs" "$tar_extract_dir/docs" >/dev/null \
+    || fail "tar output did not match expected tree"
+rsync -a "$docs_path/" "$rsync_dir/docs/"
+diff -r "$expected_tree/docs" "$rsync_dir/docs" >/dev/null \
+    || fail "rsync output did not match expected tree"
 
 XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" \
     materialize "$file_path" "$materialize_dir" > "$work_dir/materialize.out"
