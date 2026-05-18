@@ -26,7 +26,7 @@ plugins, or application-specific integrations.
 - [x] Runtime crate has an in-memory metadata model with provider sessions,
   Promise trees, node attributes, path normalization, parent/child indexes,
   provider disconnect state, and mode/directory size validation.
-- [x] Private IPC crate has a Unix socket `STATUS` command.
+- [x] Private IPC crate has a Unix socket with bounded framed status messages.
 - [x] `fuse-promised --foreground` serves the private status IPC socket.
 - [x] `fpctl status` queries the daemon when connected and falls back to
   `daemon=not-connected` when disconnected.
@@ -71,7 +71,7 @@ skeleton without claiming runtime behavior that does not exist yet.
 - [x] Keep daemon IPC private and replaceable.
 - [x] Add initial Rust workspace and public header.
 - [x] Add runtime metadata skeleton.
-- [x] Add status-only private IPC skeleton.
+- [x] Add private IPC skeleton.
 - [x] Add daemon and `fpctl status` skeleton.
 - [x] Mark pkg-config and systemd files as placeholders until install support
   exists.
@@ -115,10 +115,10 @@ Acceptance:
 
 ### G1.2 Private IPC Expansion
 
-- [ ] Replace status-only line protocol with a bounded private protocol.
-- [ ] Add handshake/version negotiation.
-- [ ] Add max message size checks.
-- [ ] Add Unix peer credential validation where available.
+- [x] Replace status-only line protocol with a bounded private protocol.
+- [x] Add handshake/version negotiation.
+- [x] Add max message size checks.
+- [x] Add Unix peer credential validation where available.
 - [ ] Add provider register/unregister messages.
 - [ ] Add Promise commit request/response messages.
 - [ ] Add provider read request/response messages.

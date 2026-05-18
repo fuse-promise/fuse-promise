@@ -158,8 +158,7 @@ The private daemon IPC is a Unix domain socket under:
 $XDG_RUNTIME_DIR/fuse-promise.sock
 ```
 
-The current status-only line protocol is a temporary skeleton. Before provider
-registration or commit is implemented, replace it with a bounded framed
+The original status-only line protocol has been replaced with a bounded framed
 protocol:
 
 ```text
@@ -169,8 +168,8 @@ bincode-encoded private message body
 
 Minimum message families:
 
-- `Hello` / version negotiation.
-- `Status`.
+- `Hello` / version negotiation. Implemented for status.
+- `Status`. Implemented.
 - `ProviderRegister`.
 - `ProviderUnregister`.
 - `PromiseCommit`.
@@ -319,7 +318,7 @@ Packaging dependencies and tools are deferred until ABI hardening:
 
 Do not start with FUSE callbacks. Build the lower layers in this order:
 
-1. Replace status-only IPC with the framed protocol.
+1. Replace status-only IPC with the framed protocol. Done for status.
 2. Move provider registration through daemon-owned runtime.
 3. Move Promise commit through daemon-owned runtime.
 4. Add a test provider path that can answer read requests over IPC.

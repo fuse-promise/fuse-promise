@@ -11,4 +11,6 @@ name = "fuse_promise_ipc"
 path = "src/lib.rs"
 
 [dependencies]
+bincode.workspace = true
 fuse-promise-runtime = { path = "../fuse-promise-runtime" }
+rustix.workspace = true
