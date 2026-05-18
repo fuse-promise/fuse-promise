@@ -119,6 +119,7 @@ pub struct PromiseNode {
     pub parent_path: Option<String>,
     pub name: String,
     pub provider_node_id: String,
+    pub materialized_path: Option<String>,
     pub kind: NodeKind,
     pub attr: NodeAttr,
 }
@@ -210,6 +211,7 @@ impl PromiseBuilder {
                 parent_path: None,
                 name: String::new(),
                 provider_node_id: String::new(),
+                materialized_path: None,
                 kind: NodeKind::Directory,
                 attr: NodeAttr::new(0o755, 0, 0),
             },
@@ -286,6 +288,7 @@ impl PromiseBuilder {
                 parent_path: Some(parent.to_owned()),
                 name,
                 provider_node_id: provider_node_id.to_owned(),
+                materialized_path: None,
                 kind,
                 attr,
             },
@@ -536,6 +539,28 @@ impl Runtime {
             offset,
             length,
         }))
+    }
+
+    pub fn mark_node_materialized(
+        &mut self,
+        promise_id: &str,
+        relative_path: &str,
+        materialized_path: &Path,
+    ) -> Result<()> {
+        let normalized_path = normalize_relative_path(relative_path)?;
+        let tree = self.promises.get_mut(promise_id).ok_or(Status::NotFound)?;
+        let node = tree
+            .nodes
+            .get_mut(&normalized_path)
+            .ok_or(Status::NotFound)?;
+        if node.kind != NodeKind::File {
+            return Err(Status::InvalidArgument);
+        }
+        let Some(path) = materialized_path.to_str() else {
+            return Err(Status::InvalidArgument);
+        };
+        node.materialized_path = Some(path.to_owned());
+        Ok(())
     }
 
     pub fn promises(&self) -> impl Iterator<Item = &PromiseTree> {

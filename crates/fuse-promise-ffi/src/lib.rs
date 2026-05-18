@@ -1,14 +1,16 @@
 #![allow(non_camel_case_types)]
 
 use fuse_promise_ipc::{
-    commit_promise, connect_provider, PromiseCommitRequest, ProviderConnection,
-    ProviderReadRequest, ProviderReadResponse, ProviderReadStatus,
+    commit_promise, connect_provider, materialize_file, MaterializeConflictPolicy,
+    MaterializeRequest, PromiseCommitRequest, ProviderConnection, ProviderReadRequest,
+    ProviderReadResponse, ProviderReadStatus,
 };
 use fuse_promise_runtime::{
     default_control_socket_path, default_mount_path, validate_runtime_dir_path, NodeAttr,
     PromiseBuilder, ProviderId, Status, API_VERSION,
 };
 use std::ffi::{CStr, CString};
+use std::fs;
 use std::io;
 use std::os::raw::{c_char, c_void};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -346,11 +348,22 @@ pub unsafe extern "C" fn fp_materialize(
         if context.is_null() {
             return Err(FP_ERR_INVALID_ARGUMENT);
         }
-        let _promise_path = cstr_to_str(promise_path)?;
-        let _target_dir = cstr_to_str(target_dir)?;
-        materialize_options(options)?;
+        let context = &*context;
+        let promise_path = absolute_client_path(cstr_to_str(promise_path)?).map_err(io_to_ffi)?;
+        let target_dir = canonical_target_dir(cstr_to_str(target_dir)?)?;
+        let conflict_policy = materialize_options(options)?;
 
-        Ok(FP_ERR_UNAVAILABLE)
+        materialize_file(
+            &context.inner.socket_path,
+            MaterializeRequest {
+                source_path: promise_path,
+                target_dir,
+                conflict_policy,
+            },
+        )
+        .map_err(io_to_ffi)?;
+
+        Ok(FP_OK)
     })
 }
 
@@ -539,16 +552,38 @@ unsafe fn node_attr(attr: *const fp_node_attr_t) -> Result<NodeAttr, fp_status_t
     Ok(NodeAttr::new(attr.mode, attr.size, attr.mtime_nsec))
 }
 
-unsafe fn materialize_options(options: *const fp_materialize_options_t) -> Result<(), fp_status_t> {
+unsafe fn materialize_options(
+    options: *const fp_materialize_options_t,
+) -> Result<MaterializeConflictPolicy, fp_status_t> {
     if options.is_null() {
-        return Ok(());
+        return Ok(MaterializeConflictPolicy::Fail);
     }
     if ((*options).struct_size as usize) < required_materialize_options_size() {
         return Err(FP_ERR_INVALID_ARGUMENT);
     }
     match (*options).conflict_policy {
-        FP_CONFLICT_FAIL | FP_CONFLICT_OVERWRITE | FP_CONFLICT_RENAME => Ok(()),
+        FP_CONFLICT_FAIL => Ok(MaterializeConflictPolicy::Fail),
+        FP_CONFLICT_OVERWRITE => Ok(MaterializeConflictPolicy::Overwrite),
+        FP_CONFLICT_RENAME => Ok(MaterializeConflictPolicy::Rename),
         _ => Err(FP_ERR_INVALID_ARGUMENT),
+    }
+}
+
+fn absolute_client_path(path: &str) -> io::Result<PathBuf> {
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
+}
+
+fn canonical_target_dir(path: &str) -> Result<PathBuf, fp_status_t> {
+    let path = fs::canonicalize(path).map_err(io_to_ffi)?;
+    if path.is_dir() {
+        Ok(path)
+    } else {
+        Err(FP_ERR_INVALID_ARGUMENT)
     }
 }
 
@@ -655,6 +690,7 @@ fn provider_read_status_from_ffi(status: fp_status_t) -> ProviderReadStatus {
 fn io_to_ffi(error: io::Error) -> fp_status_t {
     match error.kind() {
         io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => FP_ERR_VERSION_MISMATCH,
+        io::ErrorKind::AlreadyExists => FP_ERR_ALREADY_EXISTS,
         io::ErrorKind::NotFound
         | io::ErrorKind::ConnectionRefused
         | io::ErrorKind::AddrNotAvailable => FP_ERR_UNAVAILABLE,

@@ -1,6 +1,11 @@
-use fuse_promise_ipc::{query_inspect, query_status};
+use fuse_promise_ipc::{
+    materialize_file, query_inspect, query_status, MaterializeConflictPolicy, MaterializeRequest,
+};
 use fuse_promise_runtime::{default_control_socket_path, default_mount_path};
 use std::env;
+use std::fs;
+use std::io;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -22,6 +27,24 @@ fn main() -> ExitCode {
             }
             list()
         }
+        Some("materialize") => {
+            let Some(promise_path) = args.next() else {
+                eprintln!("fpctl: materialize requires a promise path");
+                print_help();
+                return ExitCode::from(2);
+            };
+            let Some(target_dir) = args.next() else {
+                eprintln!("fpctl: materialize requires a target directory");
+                print_help();
+                return ExitCode::from(2);
+            };
+            if let Some(extra) = args.next() {
+                eprintln!("fpctl: unexpected argument: {extra}");
+                print_help();
+                return ExitCode::from(2);
+            }
+            materialize(&promise_path, &target_dir)
+        }
         Some("-h") | Some("--help") | Some("help") => {
             print_help();
             ExitCode::SUCCESS
@@ -30,6 +53,48 @@ fn main() -> ExitCode {
             eprintln!("fpctl: unknown command: {command}");
             print_help();
             ExitCode::from(2)
+        }
+    }
+}
+
+fn materialize(promise_path: &str, target_dir: &str) -> ExitCode {
+    let socket_path = match default_control_socket_path() {
+        Ok(path) => path,
+        Err(status) => {
+            eprintln!("fpctl: {}", status.as_str());
+            return ExitCode::from(1);
+        }
+    };
+    let source_path = match absolute_client_path(promise_path) {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("fpctl: {error}");
+            return ExitCode::from(1);
+        }
+    };
+    let target_dir = match canonical_target_dir(target_dir) {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("fpctl: {error}");
+            return ExitCode::from(1);
+        }
+    };
+
+    match materialize_file(
+        &socket_path,
+        MaterializeRequest {
+            source_path,
+            target_dir,
+            conflict_policy: MaterializeConflictPolicy::Fail,
+        },
+    ) {
+        Ok(response) => {
+            print!("{}", response.encode_text());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("fpctl: {error}");
+            ExitCode::from(1)
         }
     }
 }
@@ -52,6 +117,27 @@ fn list() -> ExitCode {
             eprintln!("fpctl: {error}");
             ExitCode::from(1)
         }
+    }
+}
+
+fn absolute_client_path(path: &str) -> io::Result<PathBuf> {
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(env::current_dir()?.join(path))
+    }
+}
+
+fn canonical_target_dir(path: &str) -> io::Result<PathBuf> {
+    let path = fs::canonicalize(path)?;
+    if path.is_dir() {
+        Ok(path)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "target directory is not a directory",
+        ))
     }
 }
 
@@ -92,4 +178,5 @@ fn print_help() {
     println!("commands:");
     println!("  status    Query the user-session daemon status");
     println!("  list      List daemon-owned promises and nodes");
+    println!("  materialize <promise-file> <target-dir>");
 }

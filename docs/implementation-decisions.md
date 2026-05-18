@@ -75,7 +75,7 @@ development metadata so `fuser` can link the libfuse3 mount implementation.
 |---|---|---:|---|---|
 | FUSE adapter | `fuser` | `0.17.0` | Phase 1 | Use `default-features = false`, `libfuse3`, and `abi-7-31`. This targets libfuse3/fusermount3 while keeping Promise semantics in our runtime. |
 | IPC encoding | `bincode` | `2.0.1` | Phase 1 | Use only for private IPC. Public consumers must never depend on the wire format. |
-| Unix/POSIX checks | `rustix` | `1.1` | Phase 1 | Use for peer credentials, runtime directory validation, and safer Unix filesystem/process operations. |
+| Unix/POSIX checks | `rustix` | `1.1` | Phase 1 | Use for peer credentials, runtime directory validation, timestamp application, and safer Unix filesystem/process operations. |
 | CLI | `clap` | `4.5` | Phase 1 | Approved for `fpctl` and `fuse-promised` once the CLI expands beyond the current tiny command set. |
 | Logging | `tracing` | `0.1` | Phase 1 | Structured daemon and CLI events. |
 | Logging subscriber | `tracing-subscriber` | `0.3` | Phase 1 | Foreground/debug logging and future systemd-friendly formatting. |
@@ -108,7 +108,8 @@ Rules:
 - Use `bincode` only for private IPC. It is not an ABI, file format, or public
   compatibility promise.
 - Use `rustix` only for Unix/POSIX checks where the standard library does not
-  provide the required ownership, permission, credential, or socket behavior.
+  provide the required ownership, permission, credential, timestamp, or socket
+  behavior.
 - Keep `tempfile` as a dev-dependency for isolated tests.
 - `clap`, `tracing`, `tracing-subscriber`, and `thiserror` are approved
   dependencies, but individual crates should add them only when the code starts
@@ -241,7 +242,8 @@ Minimum message families:
 - `ProviderReadResponse`. Implemented as bounded private message helpers.
 - Provider disconnect propagation. Implemented for connection-scoped provider
   registrations.
-- `MaterializeStart`.
+- `MaterializeFile`. Implemented for single files with fail-on-conflict
+  behavior.
 - `MaterializeCancel`.
 - `MaterializeStatus`.
 - Structured error response.

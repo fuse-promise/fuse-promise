@@ -9,8 +9,6 @@ use fuse_promise_runtime::{
 use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
-#[cfg(feature = "fuse-mount")]
-use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(feature = "fuse-mount")]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -26,7 +24,6 @@ pub struct FuseMount;
 #[cfg(feature = "fuse-mount")]
 struct PromiseFilesystem {
     state: IpcState,
-    next_read_request_id: AtomicU64,
 }
 
 #[cfg(feature = "fuse-mount")]
@@ -241,7 +238,7 @@ impl PromiseFilesystem {
         match read_plan {
             ReadPlan::Eof => Ok(None),
             ReadPlan::Request(plan) => Ok(Some(ProviderReadRequest {
-                request_id: self.next_read_request_id.fetch_add(1, Ordering::Relaxed),
+                request_id: self.state.next_provider_read_request_id(),
                 provider_id: plan.provider_id.raw(),
                 promise_id: plan.promise_id,
                 relative_path: plan.relative_path,
@@ -268,10 +265,7 @@ pub fn start(mount_path: &Path, state: IpcState) -> io::Result<Option<FuseMount>
     ];
     config.n_threads = Some(1);
 
-    let filesystem = PromiseFilesystem {
-        state,
-        next_read_request_id: AtomicU64::new(1),
-    };
+    let filesystem = PromiseFilesystem { state };
     let session = fuser::spawn_mount2(filesystem, mount_path, &config)?;
     Ok(Some(FuseMount {
         session: Some(session),

@@ -205,10 +205,10 @@ fp_status_t fp_materialize(
 The current implementation routes `fp_promise_commit()` through private daemon
 IPC and returns `FP_ERR_UNAVAILABLE` until the daemon reports a commit-ready
 FUSE namespace. When commit-ready, the daemon owns the namespace and may return
-the visible Promise path. `fp_materialize()` still returns
-`FP_ERR_UNAVAILABLE` until materialize IPC and the materialize engine are
-implemented. The public library must not fabricate visible FUSE paths from
-client-local state.
+the visible Promise path. `fp_materialize()` supports single-file materialize
+with `FP_CONFLICT_FAIL`; directory materialize, overwrite/rename policies,
+progress, and cancellation remain under development. The public library must
+not fabricate visible FUSE paths from client-local state.
 
 ## String and Buffer Rules
 
@@ -250,7 +250,7 @@ fp_promise_add_file(builder, "photos/a.jpg", &file_attr, "remote-file-1");
 
 char path[4096];
 fp_status_t status = fp_promise_commit(builder, path, sizeof(path));
-/* The current skeleton returns FP_ERR_UNAVAILABLE until daemon IPC exists. */
+/* Returns FP_OK with a visible path after the daemon is commit-ready. */
 (void)status;
 
 /* The provider process must remain alive while the promise can be read. */

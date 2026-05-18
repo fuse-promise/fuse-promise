@@ -50,8 +50,9 @@ plugins, or application-specific integrations.
   `daemon=not-connected` when disconnected.
 - [x] `fpctl list` reports daemon-owned providers, promises, and runtime nodes
   through private IPC.
-- [x] `fp_promise_commit()` is gated on daemon commit readiness and
-  `fp_materialize()` returns `FP_ERR_UNAVAILABLE` until materialize IPC exists.
+- [x] `fp_promise_commit()` is gated on daemon commit readiness.
+- [x] `fp_materialize()` and `fpctl materialize` can materialize a single file
+  through private daemon IPC using the provider read path.
 - [x] `fp_promise_commit()` has FFI coverage for the commit-ready success path
   returning `$XDG_RUNTIME_DIR/fuse-promise/<promise-id>`.
 - [x] Basic Rust and C header verification passes.
@@ -111,7 +112,7 @@ pass and one pushable commit.
 | [x] | 5 | Close G1.6 metadata-only FUSE ops | Feature-gated `lookup`, `getattr`, and `readdir` over daemon runtime. | `stat`, `ls`, and `find` work against a committed tree without provider read requests. |
 | [x] | 6 | Close G1.6 FUSE read routing | Feature-gated `open`, offset `read`, `release`, and errno mapping. | `cat` and offset `dd` request only needed byte ranges and provider errors map deterministically. |
 | [x] | 7 | Close G1.7 read-only MVP gate | End-to-end provider, commit, mount, inspect, lazy read, and disconnect behavior. | A provider-created tree is visible, metadata reads transfer no bytes, file reads route only requested ranges, and disconnect errors are deterministic. |
-| [ ] | 8 | Start G2.1 single-file materialize | Private materialize IPC plus daemon file copy using the existing read path. | `fpctl materialize <promise-file> <target-dir>` writes matching file content and metadata. |
+| [x] | 8 | Start G2.1 single-file materialize | Private materialize IPC plus daemon file copy using the existing read path. | `fpctl materialize <promise-file> <target-dir>` writes matching file content and metadata. |
 | [ ] | 9 | Add G2.2 directory materialize | Recursive tree walk, directory creation, child file materialize, metadata application. | `diff -r` matches an expected directory tree. |
 | [ ] | 10 | Harden G3 developer ABI | Header/constant/layout/symbol/panic tests and C examples. | Public ABI tests pass and examples link only through the public header and pkg-config metadata. |
 
@@ -269,8 +270,8 @@ Reads request only the byte ranges needed by the caller.
 
 The repeatable FUSE smoke harness covers a public C ABI provider committing a
 tree and filesystem access through `fpctl status`, `fpctl list`, `find`, `ls`,
-`stat`, offset `dd`, `cat`, `cp`, provider disconnect, and provider-gone read
-failure:
+`stat`, offset `dd`, `cat`, `cp`, single-file materialize, provider
+disconnect, and provider-gone read failure:
 
 ```sh
 tests/read-only-mvp-smoke.sh
@@ -292,11 +293,11 @@ the same read path as lazy filesystem reads.
 
 ### G2.1 File Materialize
 
-- [ ] Add materialize IPC request/response.
-- [ ] Implement file materialize in the daemon.
-- [ ] Stream provider bytes in chunks.
-- [ ] Apply file mode and mtime.
-- [ ] Record materialized node state.
+- [x] Add materialize IPC request/response.
+- [x] Implement file materialize in the daemon.
+- [x] Stream provider bytes in chunks.
+- [x] Apply file mode and mtime.
+- [x] Record materialized node state.
 
 Acceptance:
 
@@ -322,7 +323,7 @@ diff -r <expected-dir> <target-dir>/<dir>
 
 ### G2.3 Conflict, Progress, and Cancellation
 
-- [ ] Implement `FP_CONFLICT_FAIL`.
+- [x] Implement `FP_CONFLICT_FAIL`.
 - [ ] Implement `FP_CONFLICT_OVERWRITE`.
 - [ ] Implement `FP_CONFLICT_RENAME`.
 - [ ] Add progress reporting.

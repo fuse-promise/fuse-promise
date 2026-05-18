@@ -6,10 +6,11 @@ use fuse_promise_runtime::{
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::os::unix::fs::FileTypeExt;
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixListener;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -118,6 +119,40 @@ impl IpcMountStatus {
             .map(|mount_path| mount_path.join(promise_id))
             .ok_or(Status::Unavailable)
     }
+
+    fn resolve_visible_path(&self, source_path: &Path) -> Result<(String, String), Status> {
+        if !self.ready_for_commits {
+            return Err(Status::Unavailable);
+        }
+        if !source_path.is_absolute() {
+            return Err(Status::InvalidArgument);
+        }
+
+        let mount_path = self.mount_path.as_ref().ok_or(Status::Unavailable)?;
+        let relative = source_path
+            .strip_prefix(mount_path)
+            .map_err(|_| Status::NotFound)?;
+        let mut components = relative.components();
+        let Some(std::path::Component::Normal(promise_id)) = components.next() else {
+            return Err(Status::NotFound);
+        };
+        let Some(promise_id) = promise_id.to_str() else {
+            return Err(Status::InvalidArgument);
+        };
+
+        let mut parts = Vec::new();
+        for component in components {
+            let std::path::Component::Normal(part) = component else {
+                return Err(Status::InvalidArgument);
+            };
+            let Some(part) = part.to_str() else {
+                return Err(Status::InvalidArgument);
+            };
+            parts.push(part);
+        }
+
+        Ok((promise_id.to_owned(), parts.join("/")))
+    }
 }
 
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
@@ -133,6 +168,7 @@ enum Request {
         provider_id: u64,
     },
     PromiseCommit(PromiseCommitBody),
+    Materialize(MaterializeBody),
     ProviderReadResponse(ProviderReadResponseBody),
 }
 
@@ -149,6 +185,7 @@ enum Response {
     },
     ProviderUnregistered,
     PromiseCommitted(PromiseCommittedBody),
+    Materialized(MaterializedBody),
     ProviderReadRequest(ProviderReadRequestBody),
     Error(ErrorBody),
 }
@@ -215,6 +252,26 @@ enum PromiseNodeKindBody {
 struct PromiseCommittedBody {
     promise_id: String,
     visible_path: String,
+}
+
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
+struct MaterializeBody {
+    source_path: String,
+    target_dir: String,
+    conflict_policy: MaterializeConflictPolicyBody,
+}
+
+#[derive(Debug, Clone, Copy, Encode, Decode, PartialEq, Eq)]
+enum MaterializeConflictPolicyBody {
+    Fail,
+    Overwrite,
+    Rename,
+}
+
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
+struct MaterializedBody {
+    target_path: String,
+    bytes_written: u64,
 }
 
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
@@ -351,6 +408,7 @@ enum ErrorCode {
     VersionMismatch,
     Unavailable,
     NotFound,
+    AlreadyExists,
     ProviderGone,
     Permission,
     Internal,
@@ -449,6 +507,26 @@ pub struct PromiseCommitResponse {
     pub visible_path: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaterializeConflictPolicy {
+    Fail,
+    Overwrite,
+    Rename,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaterializeRequest {
+    pub source_path: PathBuf,
+    pub target_dir: PathBuf,
+    pub conflict_policy: MaterializeConflictPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaterializeResponse {
+    pub target_path: PathBuf,
+    pub bytes_written: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderReadRequest {
     pub request_id: u64,
@@ -473,6 +551,7 @@ pub struct IpcState {
     mount_status: Arc<Mutex<IpcMountStatus>>,
     provider_routes: Arc<Mutex<std::collections::BTreeMap<u64, ProviderRoute>>>,
     pending_reads: Arc<Mutex<std::collections::BTreeMap<u64, PendingRead>>>,
+    next_read_request_id: Arc<AtomicU64>,
 }
 
 #[derive(Clone)]
@@ -493,6 +572,7 @@ impl IpcState {
             mount_status: Arc::new(Mutex::new(IpcMountStatus::not_mounted())),
             provider_routes: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
             pending_reads: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
+            next_read_request_id: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -581,6 +661,10 @@ impl IpcState {
                 "provider read response channel closed",
             )),
         }
+    }
+
+    pub fn next_provider_read_request_id(&self) -> u64 {
+        self.next_read_request_id.fetch_add(1, Ordering::Relaxed)
     }
 
     fn register_provider_route(&self, provider_id: u64, stream: &UnixStream) -> io::Result<()> {
@@ -772,6 +856,25 @@ pub fn commit_promise(
         Response::Error(error) => Err(error_to_io(error)),
         _ => Err(invalid_data(
             "daemon returned an unexpected promise commit response",
+        )),
+    }
+}
+
+pub fn materialize_file(
+    socket_path: &Path,
+    request: MaterializeRequest,
+) -> io::Result<MaterializeResponse> {
+    let mut stream = connect_and_hello(socket_path)?;
+
+    write_frame(&mut stream, &Request::Materialize(request.into_body()?))?;
+    match read_response(&mut stream)? {
+        Response::Materialized(response) => Ok(MaterializeResponse {
+            target_path: PathBuf::from(response.target_path),
+            bytes_written: response.bytes_written,
+        }),
+        Response::Error(error) => Err(error_to_io(error)),
+        _ => Err(invalid_data(
+            "daemon returned an unexpected materialize response",
         )),
     }
 }
@@ -1037,6 +1140,16 @@ fn handle_client_requests(
                     "client must send hello before promise commit",
                 )?;
             }
+            Request::Materialize(request) if negotiated => {
+                handle_materialize(stream, state, request)?;
+            }
+            Request::Materialize(_) => {
+                write_error(
+                    stream,
+                    ErrorCode::InvalidRequest,
+                    "client must send hello before materialize",
+                )?;
+            }
             Request::ProviderReadResponse(response) if negotiated => {
                 state.complete_provider_read(registered_providers, response)?;
             }
@@ -1130,6 +1243,244 @@ fn handle_promise_commit(
             visible_path: visible_path.to_string_lossy().into_owned(),
         }),
     )
+}
+
+fn handle_materialize(
+    stream: &mut UnixStream,
+    state: &IpcState,
+    request: MaterializeBody,
+) -> io::Result<()> {
+    match materialize_file_in_state(state, request) {
+        Ok(response) => write_frame(stream, &Response::Materialized(response)),
+        Err(status) => write_status_error(stream, status),
+    }
+}
+
+struct MaterializePlan {
+    promise_id: String,
+    relative_path: String,
+    target_path: PathBuf,
+    size: u64,
+    mode: u32,
+    mtime_nsec: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileIdentity {
+    dev: u64,
+    ino: u64,
+}
+
+#[derive(Debug)]
+struct MaterializeWriteError {
+    status: Status,
+    created_target: Option<FileIdentity>,
+}
+
+impl FileIdentity {
+    fn from_metadata(metadata: &fs::Metadata) -> Self {
+        Self {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+        }
+    }
+}
+
+impl MaterializeWriteError {
+    fn without_created_target(status: Status) -> Self {
+        Self {
+            status,
+            created_target: None,
+        }
+    }
+
+    fn with_created_target(status: Status, created_target: FileIdentity) -> Self {
+        Self {
+            status,
+            created_target: Some(created_target),
+        }
+    }
+}
+
+fn materialize_file_in_state(
+    state: &IpcState,
+    request: MaterializeBody,
+) -> std::result::Result<MaterializedBody, Status> {
+    let request = MaterializeRequest::from_body(request)?;
+    let plan = plan_materialize_file(state, &request)?;
+    let bytes_written = match write_materialized_file(state, &plan) {
+        Ok(bytes_written) => bytes_written,
+        Err(error) => {
+            if let Some(identity) = error.created_target {
+                cleanup_materialized_target(&plan.target_path, identity);
+            }
+            return Err(error.status);
+        }
+    };
+    {
+        let mut runtime = state.runtime.lock().map_err(|_| Status::Io)?;
+        runtime.mark_node_materialized(&plan.promise_id, &plan.relative_path, &plan.target_path)?;
+    }
+
+    Ok(MaterializedBody {
+        target_path: plan.target_path.to_string_lossy().into_owned(),
+        bytes_written,
+    })
+}
+
+fn plan_materialize_file(
+    state: &IpcState,
+    request: &MaterializeRequest,
+) -> std::result::Result<MaterializePlan, Status> {
+    if request.conflict_policy != MaterializeConflictPolicy::Fail {
+        return Err(Status::Unavailable);
+    }
+    validate_target_dir(&request.target_dir)?;
+
+    let mount_status = state.mount_status().map_err(|_| Status::Io)?;
+    let (promise_id, relative_path) = mount_status.resolve_visible_path(&request.source_path)?;
+    let node = {
+        let runtime = state.runtime.lock().map_err(|_| Status::Io)?;
+        let tree = runtime.promise(&promise_id).ok_or(Status::NotFound)?;
+        let node = tree.get(&relative_path).ok_or(Status::NotFound)?;
+        if node.kind != NodeKind::File {
+            return Err(Status::InvalidArgument);
+        }
+        node.clone()
+    };
+    let target_path = request.target_dir.join(&node.name);
+    match fs::symlink_metadata(&target_path) {
+        Ok(_) => return Err(Status::AlreadyExists),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(io_error_to_status(&error)),
+    }
+
+    Ok(MaterializePlan {
+        promise_id,
+        relative_path,
+        target_path,
+        size: node.attr.size,
+        mode: node.attr.mode,
+        mtime_nsec: node.attr.mtime_nsec,
+    })
+}
+
+fn validate_target_dir(target_dir: &Path) -> std::result::Result<(), Status> {
+    if !target_dir.is_absolute() {
+        return Err(Status::InvalidArgument);
+    }
+    let metadata = fs::metadata(target_dir).map_err(|error| io_error_to_status(&error))?;
+    if metadata.is_dir() {
+        Ok(())
+    } else {
+        Err(Status::InvalidArgument)
+    }
+}
+
+fn write_materialized_file(
+    state: &IpcState,
+    plan: &MaterializePlan,
+) -> std::result::Result<u64, MaterializeWriteError> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&plan.target_path)
+        .map_err(|error| {
+            MaterializeWriteError::without_created_target(io_error_to_status(&error))
+        })?;
+    let target_identity = FileIdentity::from_metadata(&file.metadata().map_err(|error| {
+        MaterializeWriteError::without_created_target(io_error_to_status(&error))
+    })?);
+
+    let mut offset = 0;
+    while offset < plan.size {
+        let length = (plan.size - offset).min(u64::from(MAX_PROVIDER_READ_LEN)) as u32;
+        let request = plan_materialize_read(state, plan, offset, length).map_err(|status| {
+            MaterializeWriteError::with_created_target(status, target_identity)
+        })?;
+        let response = state.route_provider_read(request).map_err(|error| {
+            MaterializeWriteError::with_created_target(io_error_to_status(&error), target_identity)
+        })?;
+        if response.status != ProviderReadStatus::Ok {
+            return Err(MaterializeWriteError::with_created_target(
+                provider_read_status_to_status(response.status),
+                target_identity,
+            ));
+        }
+        if response.bytes.is_empty() {
+            return Err(MaterializeWriteError::with_created_target(
+                Status::Io,
+                target_identity,
+            ));
+        }
+
+        file.write_all(&response.bytes).map_err(|error| {
+            MaterializeWriteError::with_created_target(io_error_to_status(&error), target_identity)
+        })?;
+        offset = offset
+            .checked_add(response.bytes.len() as u64)
+            .ok_or_else(|| {
+                MaterializeWriteError::with_created_target(Status::InvalidArgument, target_identity)
+            })?;
+    }
+
+    file.set_permissions(fs::Permissions::from_mode(plan.mode & 0o7777))
+        .map_err(|error| {
+            MaterializeWriteError::with_created_target(io_error_to_status(&error), target_identity)
+        })?;
+    apply_mtime(&file, plan.mtime_nsec)
+        .map_err(|status| MaterializeWriteError::with_created_target(status, target_identity))?;
+    drop(file);
+    Ok(offset)
+}
+
+fn cleanup_materialized_target(path: &Path, expected: FileIdentity) {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if FileIdentity::from_metadata(&metadata) == expected {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn plan_materialize_read(
+    state: &IpcState,
+    plan: &MaterializePlan,
+    offset: u64,
+    length: u32,
+) -> std::result::Result<ProviderReadRequest, Status> {
+    let runtime = state.runtime.lock().map_err(|_| Status::Io)?;
+    let read_plan = runtime.plan_read(&plan.promise_id, &plan.relative_path, offset, length)?;
+    match read_plan {
+        fuse_promise_runtime::ReadPlan::Request(plan) => Ok(ProviderReadRequest {
+            request_id: state.next_provider_read_request_id(),
+            provider_id: plan.provider_id.raw(),
+            promise_id: plan.promise_id,
+            relative_path: plan.relative_path,
+            provider_node_id: plan.provider_node_id,
+            offset: plan.offset,
+            length: plan.length,
+        }),
+        fuse_promise_runtime::ReadPlan::Eof => Err(Status::Io),
+    }
+}
+
+fn apply_mtime(file: &fs::File, mtime_nsec: i64) -> std::result::Result<(), Status> {
+    let seconds = mtime_nsec / 1_000_000_000;
+    let nanoseconds = mtime_nsec % 1_000_000_000;
+    let timestamp = rustix::time::Timespec {
+        tv_sec: seconds,
+        tv_nsec: nanoseconds as _,
+    };
+    let timestamps = rustix::fs::Timestamps {
+        last_access: timestamp,
+        last_modification: timestamp,
+    };
+    rustix::fs::futimens(file, &timestamps).map_err(|error| {
+        let io_error: io::Error = error.into();
+        io_error_to_status(&io_error)
+    })
 }
 
 fn read_response<R>(reader: &mut R) -> io::Result<Response>
@@ -1258,6 +1609,7 @@ fn error_to_io(error: ErrorBody) -> io::Error {
         ErrorCode::Unavailable | ErrorCode::NotFound | ErrorCode::ProviderGone => {
             io::ErrorKind::NotFound
         }
+        ErrorCode::AlreadyExists => io::ErrorKind::AlreadyExists,
         ErrorCode::Permission => io::ErrorKind::PermissionDenied,
         ErrorCode::Internal => io::ErrorKind::Other,
     };
@@ -1271,10 +1623,37 @@ fn status_to_error_code(status: Status) -> ErrorCode {
         Status::Unavailable => ErrorCode::Unavailable,
         Status::Permission => ErrorCode::Permission,
         Status::NotFound => ErrorCode::NotFound,
-        Status::AlreadyExists => ErrorCode::InvalidRequest,
+        Status::AlreadyExists => ErrorCode::AlreadyExists,
         Status::ProviderGone => ErrorCode::ProviderGone,
         Status::VersionMismatch => ErrorCode::VersionMismatch,
         _ => ErrorCode::Internal,
+    }
+}
+
+fn io_error_to_status(error: &io::Error) -> Status {
+    match error.kind() {
+        io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => Status::InvalidArgument,
+        io::ErrorKind::NotFound => Status::NotFound,
+        io::ErrorKind::AlreadyExists => Status::AlreadyExists,
+        io::ErrorKind::PermissionDenied => Status::Permission,
+        io::ErrorKind::TimedOut => Status::Timeout,
+        io::ErrorKind::ConnectionRefused
+        | io::ErrorKind::ConnectionReset
+        | io::ErrorKind::BrokenPipe => Status::ProviderGone,
+        _ => Status::Io,
+    }
+}
+
+fn provider_read_status_to_status(status: ProviderReadStatus) -> Status {
+    match status {
+        ProviderReadStatus::Ok => Status::Ok,
+        ProviderReadStatus::InvalidArgument => Status::InvalidArgument,
+        ProviderReadStatus::Permission => Status::Permission,
+        ProviderReadStatus::NotFound => Status::NotFound,
+        ProviderReadStatus::ProviderGone => Status::ProviderGone,
+        ProviderReadStatus::Io => Status::Io,
+        ProviderReadStatus::Timeout => Status::Timeout,
+        ProviderReadStatus::Cancelled => Status::Cancelled,
     }
 }
 
@@ -1326,6 +1705,57 @@ impl PromiseNodeSpec {
             mode: self.attr.mode,
             size: self.attr.size,
             mtime_nsec: self.attr.mtime_nsec,
+        }
+    }
+}
+
+impl MaterializeResponse {
+    pub fn encode_text(&self) -> String {
+        let mut output = String::new();
+        let _ = writeln!(output, "ok");
+        let _ = writeln!(output, "target_path={}", self.target_path.display());
+        let _ = writeln!(output, "bytes_written={}", self.bytes_written);
+        output
+    }
+}
+
+impl MaterializeRequest {
+    fn into_body(self) -> io::Result<MaterializeBody> {
+        validate_materialize_path("source path", &self.source_path)?;
+        validate_materialize_path("target directory", &self.target_dir)?;
+        Ok(MaterializeBody {
+            source_path: self.source_path.to_string_lossy().into_owned(),
+            target_dir: self.target_dir.to_string_lossy().into_owned(),
+            conflict_policy: self.conflict_policy.into_body(),
+        })
+    }
+
+    fn from_body(body: MaterializeBody) -> std::result::Result<Self, Status> {
+        if body.source_path.is_empty() || body.target_dir.is_empty() {
+            return Err(Status::InvalidArgument);
+        }
+        Ok(Self {
+            source_path: PathBuf::from(body.source_path),
+            target_dir: PathBuf::from(body.target_dir),
+            conflict_policy: MaterializeConflictPolicy::from_body(body.conflict_policy),
+        })
+    }
+}
+
+impl MaterializeConflictPolicy {
+    fn into_body(self) -> MaterializeConflictPolicyBody {
+        match self {
+            MaterializeConflictPolicy::Fail => MaterializeConflictPolicyBody::Fail,
+            MaterializeConflictPolicy::Overwrite => MaterializeConflictPolicyBody::Overwrite,
+            MaterializeConflictPolicy::Rename => MaterializeConflictPolicyBody::Rename,
+        }
+    }
+
+    fn from_body(body: MaterializeConflictPolicyBody) -> Self {
+        match body {
+            MaterializeConflictPolicyBody::Fail => MaterializeConflictPolicy::Fail,
+            MaterializeConflictPolicyBody::Overwrite => MaterializeConflictPolicy::Overwrite,
+            MaterializeConflictPolicyBody::Rename => MaterializeConflictPolicy::Rename,
         }
     }
 }
@@ -1476,6 +1906,17 @@ fn validate_token(name: &str, value: &str) -> io::Result<()> {
 
 fn validate_relative_path(path: &str) -> io::Result<String> {
     normalize_relative_path(path).map_err(|status| invalid_data(status.as_str()))
+}
+
+fn validate_materialize_path(name: &str, path: &Path) -> io::Result<()> {
+    if path.as_os_str().is_empty() {
+        return Err(invalid_data(&format!("{name} must not be empty")));
+    }
+    if path.to_str().is_none() {
+        return Err(invalid_data(&format!("{name} must be UTF-8")));
+    }
+
+    Ok(())
 }
 
 fn validate_read_range(offset: u64, length: u32) -> io::Result<()> {
@@ -1955,7 +2396,7 @@ mod tests {
             let response: Response = read_frame(&mut client).unwrap().unwrap();
             match response {
                 Response::Error(ErrorBody {
-                    code: ErrorCode::InvalidRequest | ErrorCode::NotFound,
+                    code: ErrorCode::InvalidRequest | ErrorCode::NotFound | ErrorCode::AlreadyExists,
                     ..
                 }) => {}
                 other => panic!("{case}: unexpected commit response: {other:?}"),
@@ -2315,6 +2756,48 @@ mod tests {
         response.status = ProviderReadStatus::ProviderGone;
         response.bytes = b"bad".to_vec();
         assert!(write_provider_read_response(&mut Vec::new(), &response).is_err());
+    }
+
+    #[test]
+    fn materialize_existing_target_is_not_owned_for_cleanup() {
+        let dir = tempfile::tempdir().unwrap();
+        let target_path = dir.path().join("readme.txt");
+        fs::write(&target_path, b"existing").unwrap();
+        let state = IpcState::new(Arc::new(Mutex::new(Runtime::new())));
+        let plan = MaterializePlan {
+            promise_id: "promise-1".to_owned(),
+            relative_path: "docs/readme.txt".to_owned(),
+            target_path: target_path.clone(),
+            size: 1,
+            mode: 0o644,
+            mtime_nsec: 0,
+        };
+
+        let error = write_materialized_file(&state, &plan).unwrap_err();
+
+        assert_eq!(error.status, Status::AlreadyExists);
+        assert_eq!(error.created_target, None);
+        assert_eq!(fs::read(&target_path).unwrap(), b"existing");
+    }
+
+    #[test]
+    fn materialize_cleanup_removes_only_matching_target_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let target_path = dir.path().join("readme.txt");
+        let original_path = dir.path().join("original-readme.txt");
+        fs::write(&target_path, b"ours").unwrap();
+        let original_identity =
+            FileIdentity::from_metadata(&fs::symlink_metadata(&target_path).unwrap());
+
+        fs::rename(&target_path, &original_path).unwrap();
+        fs::write(&target_path, b"external").unwrap();
+
+        cleanup_materialized_target(&target_path, original_identity);
+        assert_eq!(fs::read(&target_path).unwrap(), b"external");
+        assert_eq!(fs::read(&original_path).unwrap(), b"ours");
+
+        cleanup_materialized_target(&original_path, original_identity);
+        assert!(!original_path.exists());
     }
 
     fn send_hello(stream: &mut UnixStream) {

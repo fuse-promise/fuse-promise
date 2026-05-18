@@ -45,6 +45,7 @@ provider_err="$work_dir/provider.err"
 provider_bin="$work_dir/read-only-mvp-provider"
 expected_file="$work_dir/expected.txt"
 copy_file="$work_dir/copied.txt"
+materialize_dir="$work_dir/materialized"
 daemon_pid=
 provider_pid=
 
@@ -66,6 +67,7 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -m 700 "$runtime_dir"
+mkdir "$materialize_dir"
 printf 'hello from fuse-promise\n' > "$expected_file"
 : > "$read_log"
 
@@ -139,6 +141,24 @@ cat_output=$(cat "$file_path")
 cp "$file_path" "$copy_file"
 cmp "$expected_file" "$copy_file" >/dev/null || fail "cp output did not match provider data"
 
+XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" \
+    materialize "$file_path" "$materialize_dir" > "$work_dir/materialize.out"
+grep -q "^target_path=$materialize_dir/readme.txt$" "$work_dir/materialize.out" \
+    || fail "materialize did not report expected target path"
+grep -q '^bytes_written=24$' "$work_dir/materialize.out" \
+    || fail "materialize did not report expected byte count"
+cmp "$expected_file" "$materialize_dir/readme.txt" >/dev/null \
+    || fail "materialized file did not match provider data"
+materialized_stat=$(stat -c '%s %a %Y' "$materialize_dir/readme.txt")
+[ "$materialized_stat" = "24 644 0" ] \
+    || fail "materialized metadata mismatch: $materialized_stat"
+if XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" \
+    materialize "$file_path" "$materialize_dir" > "$work_dir/materialize-conflict.out" 2> "$work_dir/materialize-conflict.err"; then
+    fail "materialize conflict unexpectedly succeeded"
+fi
+grep -q "already exists" "$work_dir/materialize-conflict.err" \
+    || fail "materialize conflict did not report already exists"
+
 kill "$provider_pid"
 wait "$provider_pid" || true
 provider_pid=
@@ -157,4 +177,4 @@ if cat "$file_path" > "$work_dir/after-disconnect.out" 2> "$work_dir/after-disco
     fail "read after provider disconnect unexpectedly succeeded"
 fi
 
-echo "read-only MVP smoke passed"
+echo "MVP smoke passed"
