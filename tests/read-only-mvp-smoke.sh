@@ -207,6 +207,22 @@ grep -q '^bytes_written=24$' "$work_dir/materialize-overwrite.out" \
     || fail "overwrite materialize did not report expected byte count"
 cmp "$expected_file" "$materialize_dir/readme.txt" >/dev/null \
     || fail "overwrite materialized file did not match provider data"
+XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" \
+    materialize --rename "$file_path" "$materialize_dir" > "$work_dir/materialize-rename.out"
+grep -q "^target_path=$materialize_dir/readme (1).txt$" "$work_dir/materialize-rename.out" \
+    || fail "rename materialize did not report expected target path"
+grep -q '^bytes_written=24$' "$work_dir/materialize-rename.out" \
+    || fail "rename materialize did not report expected byte count"
+cmp "$expected_file" "$materialize_dir/readme (1).txt" >/dev/null \
+    || fail "rename materialized file did not match provider data"
+cmp "$expected_file" "$materialize_dir/readme.txt" >/dev/null \
+    || fail "rename materialize changed the conflicting file"
+XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" \
+    materialize --rename "$file_path" "$materialize_dir" > "$work_dir/materialize-rename-collision.out"
+grep -q "^target_path=$materialize_dir/readme (2).txt$" "$work_dir/materialize-rename-collision.out" \
+    || fail "rename materialize did not skip existing rename candidate"
+cmp "$expected_file" "$materialize_dir/readme (2).txt" >/dev/null \
+    || fail "rename materialize collision output did not match provider data"
 
 XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" \
     materialize "$docs_path" "$materialize_tree_dir" > "$work_dir/materialize-tree.out"
@@ -236,6 +252,21 @@ grep -q '^directories_created=0$' "$work_dir/materialize-tree-overwrite.out" \
     || fail "directory overwrite unexpectedly created directories"
 diff -r "$expected_tree/docs" "$materialize_tree_dir/docs" >/dev/null \
     || fail "directory overwrite did not match expected tree"
+XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" \
+    materialize --rename "$docs_path" "$materialize_tree_dir" > "$work_dir/materialize-tree-rename.out"
+grep -q "^target_path=$materialize_tree_dir/docs (1)$" "$work_dir/materialize-tree-rename.out" \
+    || fail "directory rename did not report expected target path"
+grep -q '^bytes_written=36$' "$work_dir/materialize-tree-rename.out" \
+    || fail "directory rename did not report expected byte count"
+grep -q '^files_written=2$' "$work_dir/materialize-tree-rename.out" \
+    || fail "directory rename did not report expected file count"
+grep -q '^directories_created=3$' "$work_dir/materialize-tree-rename.out" \
+    || fail "directory rename did not create expected directories"
+diff -r "$expected_tree/docs" "$materialize_tree_dir/docs (1)" >/dev/null \
+    || fail "directory rename did not match expected tree"
+directory_rename_stat=$(stat -c '%a %Y' "$materialize_tree_dir/docs (1)" "$materialize_tree_dir/docs (1)/guides" "$materialize_tree_dir/docs (1)/empty")
+[ "$directory_rename_stat" = "$(printf '755 0\n755 0\n755 0')" ] \
+    || fail "directory rename metadata mismatch: $directory_rename_stat"
 
 kill "$provider_pid"
 wait "$provider_pid" || true

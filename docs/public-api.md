@@ -240,8 +240,12 @@ The current implementation routes `fp_promise_commit()` through private daemon
 IPC and returns `FP_ERR_UNAVAILABLE` until the daemon reports a commit-ready
 FUSE namespace. When commit-ready, the daemon owns the namespace and may return
 the visible Promise path. `fp_materialize()` supports file and directory
-subtree materialize with `FP_CONFLICT_FAIL` and `FP_CONFLICT_OVERWRITE`;
-rename policy, progress, and cancellation remain under development.
+subtree materialize with `FP_CONFLICT_FAIL`, `FP_CONFLICT_OVERWRITE`, and
+`FP_CONFLICT_RENAME`; progress and cancellation remain under development.
+`FP_CONFLICT_RENAME` chooses a non-existing root target before materializing:
+files receive a ` (N)` suffix before the extension, directories receive the
+suffix after the directory name, and subtree child names are preserved under
+that chosen root.
 Materialized files can satisfy later reads through their local materialized
 paths, and an opt-in daemon read-through cache can coalesce reads, prefetch
 sequential ranges, and satisfy fully cached ranges without changing the public

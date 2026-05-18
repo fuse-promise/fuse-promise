@@ -51,8 +51,8 @@ The FUSE gates require libfuse3 development metadata, `/dev/fuse`, and
 
 The first stable ABI release remains blocked until these are resolved:
 
-- Decide whether implemented `FP_CONFLICT_OVERWRITE` is a stable public ABI
-  commitment and whether `FP_CONFLICT_RENAME` remains a reserved preview value.
+- Decide whether the implemented materialize conflict policies are stable
+  public ABI commitments.
 - Decide whether progress reporting and cancellation APIs are part of the first
   stable ABI or explicitly deferred.
 - Reconcile `CHANGELOG.md` with the chosen stability statement.

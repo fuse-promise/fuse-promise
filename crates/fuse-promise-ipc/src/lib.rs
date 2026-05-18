@@ -1612,9 +1612,6 @@ fn plan_materialize(
     state: &IpcState,
     request: &MaterializeRequest,
 ) -> std::result::Result<MaterializePlan, Status> {
-    if request.conflict_policy == MaterializeConflictPolicy::Rename {
-        return Err(Status::Unavailable);
-    }
     validate_target_dir(&request.target_dir)?;
 
     let mount_status = state.mount_status().map_err(|_| Status::Io)?;
@@ -1628,9 +1625,12 @@ fn plan_materialize(
         tree.subtree_nodes(&relative_path)?
     };
     let root = nodes.first().ok_or(Status::NotFound)?;
-    let target_path = request
-        .target_dir
-        .join(materialize_target_name(&promise_id, root)?);
+    let target_path = materialize_target_path(
+        &request.target_dir,
+        &materialize_target_name(&promise_id, root)?,
+        root.kind,
+        request.conflict_policy,
+    )?;
     let mut entries = Vec::new();
     for node in nodes {
         let suffix = subtree_target_suffix(&relative_path, &node.relative_path)?;
@@ -1656,6 +1656,19 @@ fn plan_materialize(
         conflict_policy: request.conflict_policy,
         entries,
     })
+}
+
+fn materialize_target_path(
+    target_dir: &Path,
+    target_name: &str,
+    target_kind: NodeKind,
+    conflict_policy: MaterializeConflictPolicy,
+) -> std::result::Result<PathBuf, Status> {
+    let target_path = target_dir.join(target_name);
+    if conflict_policy != MaterializeConflictPolicy::Rename {
+        return Ok(target_path);
+    }
+    unique_materialize_target_path(target_dir, target_name, target_kind)
 }
 
 fn materialize_target_name(
@@ -1705,6 +1718,43 @@ fn preflight_materialize_targets(
     Ok(())
 }
 
+fn unique_materialize_target_path(
+    target_dir: &Path,
+    target_name: &str,
+    target_kind: NodeKind,
+) -> std::result::Result<PathBuf, Status> {
+    for attempt in 0..1024 {
+        let candidate_name = if attempt == 0 {
+            target_name.to_owned()
+        } else {
+            rename_candidate_name(target_name, target_kind, attempt)
+        };
+        let candidate = target_dir.join(candidate_name);
+        match fs::symlink_metadata(&candidate) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(candidate),
+            Err(error) => return Err(io_error_to_status(&error)),
+        }
+    }
+
+    Err(Status::AlreadyExists)
+}
+
+fn rename_candidate_name(target_name: &str, target_kind: NodeKind, attempt: u32) -> String {
+    if target_kind == NodeKind::Directory {
+        return format!("{target_name} ({attempt})");
+    }
+
+    let path = Path::new(target_name);
+    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+        return format!("{target_name} ({attempt})");
+    };
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return format!("{target_name} ({attempt})");
+    };
+    format!("{stem} ({attempt}).{extension}")
+}
+
 fn validate_existing_materialize_target(
     entry: &MaterializeEntryPlan,
     metadata: &fs::Metadata,
@@ -1720,7 +1770,7 @@ fn validate_existing_materialize_target(
             NodeKind::File if metadata.is_file() => Ok(()),
             _ => Err(Status::AlreadyExists),
         },
-        MaterializeConflictPolicy::Rename => Err(Status::Unavailable),
+        MaterializeConflictPolicy::Rename => Err(Status::AlreadyExists),
     }
 }
 
@@ -1921,9 +1971,7 @@ fn open_materialized_file(
             open_replacement_materialized_file(entry)
         }
         MaterializeConflictPolicy::Overwrite => open_final_materialized_file(entry, true),
-        MaterializeConflictPolicy::Rename => Err(MaterializeWriteError::without_created_target(
-            Status::Unavailable,
-        )),
+        MaterializeConflictPolicy::Rename => open_final_materialized_file(entry, true),
     }
 }
 

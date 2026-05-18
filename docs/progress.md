@@ -330,7 +330,7 @@ diff -r <expected-dir> <target-dir>/<dir>
 
 - [x] Implement `FP_CONFLICT_FAIL`.
 - [x] Implement `FP_CONFLICT_OVERWRITE`.
-- [ ] Implement `FP_CONFLICT_RENAME`.
+- [x] Implement `FP_CONFLICT_RENAME`.
 - [ ] Add progress reporting.
 - [ ] Add cancellation.
 - [ ] Map cancellation to public `FP_ERR_CANCELLED` and filesystem

@@ -153,11 +153,11 @@ sockets. A provider connection closing marks its registered providers as
 disconnected and marks their available promises as provider-gone. Daemon-side
 provider read routing exists for the in-process IPC state. Real mounted FUSE
 read verification is covered by the smoke harness. File and directory subtree
-materialize IPC are implemented for fail-on-conflict and overwrite behavior.
-Reads for materialized files can use the local materialized path after provider
-disconnect. An opt-in read-through cache can satisfy fully cached ranges after
-provider disconnect; rename policy, progress, and cancellation are still under
-development.
+materialize IPC are implemented for fail-on-conflict, overwrite, and rename
+behavior. Reads for materialized files can use the local materialized path
+after provider disconnect. An opt-in read-through cache can satisfy fully
+cached ranges after provider disconnect; progress and cancellation are still
+under development.
 
 `libfusepromise.so` provider registration uses this private daemon IPC and no
 longer creates authoritative provider sessions in a client-local runtime. Its
@@ -211,6 +211,8 @@ Promise file opens use FUSE direct I/O so provider reads receive the caller's
 actual offset-based read ranges instead of kernel page-cache readahead ranges.
 If a file has been fully materialized, the runtime plans reads against the
 stored local materialized path before requiring a live provider.
+Repeated successful materialize operations update that stored path; the latest
+successful target is the path used for later materialized reads.
 If read-through cache mode is enabled, the runtime may return a complete cached
 range before requiring a live provider. Cache misses keep the existing provider
 read path, but the daemon may coalesce provider reads to a cache chunk and reply
@@ -220,8 +222,8 @@ the same read-through cache.
 
 Until a commit-ready FUSE namespace exists, public commit should return
 `FP_ERR_UNAVAILABLE`. Public materialize supports files and directory subtrees
-with fail-on-conflict and overwrite behavior; unsupported materialize modes
-should return `FP_ERR_UNAVAILABLE` or a documented error.
+with fail-on-conflict, overwrite, and rename behavior; unsupported materialize
+modes should return `FP_ERR_UNAVAILABLE` or a documented error.
 
 ## Materialize Runtime Flow
 

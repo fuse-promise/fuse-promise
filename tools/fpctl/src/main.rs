@@ -40,6 +40,17 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 };
                 (MaterializeConflictPolicy::Overwrite, promise_path)
+            } else if first == "--rename" {
+                let Some(promise_path) = args.next() else {
+                    eprintln!("fpctl: materialize --rename requires a promise path");
+                    print_help();
+                    return ExitCode::from(2);
+                };
+                (MaterializeConflictPolicy::Rename, promise_path)
+            } else if first.starts_with("--") {
+                eprintln!("fpctl: unknown materialize option: {first}");
+                print_help();
+                return ExitCode::from(2);
             } else {
                 (MaterializeConflictPolicy::Fail, first)
             };
@@ -205,5 +216,5 @@ fn print_help() {
     println!("commands:");
     println!("  status    Query the user-session daemon status");
     println!("  list      List daemon-owned promises and nodes");
-    println!("  materialize [--overwrite] <promise-path> <target-dir>");
+    println!("  materialize [--overwrite|--rename] <promise-path> <target-dir>");
 }

@@ -107,6 +107,15 @@ Read-only first keeps the ABI smaller and makes materialize behavior easier to d
 
 Materialize copies promised content into real local storage.
 
+Existing target handling is controlled by conflict policy:
+
+- Fail rejects any existing target.
+- Overwrite replaces existing regular files and reuses matching directories.
+- Rename chooses a non-existing root target name before materializing. File
+  suffixes are inserted before the extension, directory suffixes are appended
+  after the directory name, and subtree child names are preserved under the
+  chosen root.
+
 For a file:
 
 1. Create or open the target file according to conflict policy.
@@ -134,4 +143,3 @@ This means:
 - Lazy reads supply content for that snapshot.
 
 Dynamic trees may be designed later, but they should be explicit.
-

@@ -243,7 +243,7 @@ Minimum message families:
 - Provider disconnect propagation. Implemented for connection-scoped provider
   registrations.
 - `Materialize`. Implemented for files and directory subtrees with
-  fail-on-conflict and overwrite behavior.
+  fail-on-conflict, overwrite, and rename behavior.
 - `MaterializeCancel`.
 - `MaterializeStatus`.
 - Structured error response.
@@ -318,9 +318,9 @@ Initial commands:
 - `fpctl status`. Implemented.
 - `fpctl list`. Implemented.
 - `fpctl inspect <promise-path>`. Planned.
-- `fpctl materialize [--overwrite] <promise-path> <target-dir>`. Implemented
-  for files and directory subtrees with fail-on-conflict and overwrite
-  behavior.
+- `fpctl materialize [--overwrite|--rename] <promise-path> <target-dir>`.
+  Implemented for files and directory subtrees with fail-on-conflict,
+  overwrite, and rename behavior.
 - `fpctl destroy <promise-path>`. Planned.
 
 `fpctl` remains administrative and diagnostic. It is not the primary
