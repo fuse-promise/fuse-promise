@@ -52,6 +52,92 @@ Installed public surface:
 
 Daemon IPC is private and is not a supported API.
 
+## Minimal Provider Example
+
+A provider publishes metadata first, then supplies file bytes when the kernel
+reads a promised file. Writes into local storage are done through materialize;
+mounted write callbacks are not part of the current public ABI.
+
+```c
+static const char kData[] = "hello from fuse-promise example\n";
+
+static fp_status_t read_file(const fp_read_request_t *request,
+                             fp_read_response_t *response,
+                             void *user_data) {
+    (void)user_data;
+    if (strcmp(request->node_id, "example-file") != 0 ||
+        strcmp(request->relative_path, "docs/hello.txt") != 0) {
+        return FP_ERR_NOT_FOUND;
+    }
+
+    size_t size = strlen(kData);
+    if (request->offset >= size) {
+        response->bytes_written = 0;
+        return FP_OK;
+    }
+
+    size_t available = size - (size_t)request->offset;
+    size_t count = request->length < available ? request->length : available;
+    if (count > response->buffer_len) {
+        count = response->buffer_len;
+    }
+
+    memcpy(response->buffer, kData + request->offset, count);
+    response->bytes_written = count;
+    return FP_OK;
+}
+
+fp_context_options_t options = FP_CONTEXT_OPTIONS_INIT;
+options.runtime_dir = runtime_dir;
+fp_context_open(&options, &context);
+
+fp_provider_ops_t ops = FP_PROVIDER_OPS_INIT(read_file);
+fp_provider_register(context, &ops, NULL, &provider);
+
+fp_promise_builder_new(context, provider, &builder);
+
+fp_node_attr_t dir_attr = FP_NODE_ATTR_INIT;
+dir_attr.mode = 0755;
+dir_attr.mtime_nsec = 1700000000000000000LL;
+fp_promise_add_dir(builder, "docs", &dir_attr, "example-dir");
+
+fp_node_attr_t file_attr = FP_NODE_ATTR_INIT;
+file_attr.mode = 0644;
+file_attr.size = strlen(kData);
+file_attr.mtime_nsec = 1700000000000000000LL;
+fp_promise_add_file(builder, "docs/hello.txt", &file_attr, "example-file");
+
+char visible_path[4096];
+fp_promise_commit(builder, visible_path, sizeof(visible_path));
+```
+
+The complete buildable source is
+[examples/minimal_provider.c](examples/minimal_provider.c). It covers directory
+and file attributes, provider-backed reads, and materialize into a local target.
+
+Run it locally:
+
+```sh
+prefix="$PWD/.local"
+PREFIX="$prefix" DAEMON_FEATURES=fuse-mount scripts/install-dev.sh
+export PKG_CONFIG_PATH="$prefix/lib/pkgconfig"
+
+cc -std=c11 -Wall -Wextra -Werror examples/minimal_provider.c \
+  $(pkg-config --cflags --libs fuse-promise) \
+  "-Wl,-rpath,$prefix/lib" \
+  -o /tmp/minimal_provider
+
+runtime=$(mktemp -d)
+XDG_RUNTIME_DIR="$runtime" "$prefix/bin/fuse-promised" --foreground &
+/tmp/minimal_provider "$runtime" &
+
+cat "$runtime/fuse-promise/promise-1/docs/hello.txt"
+mkdir "$runtime/out"
+XDG_RUNTIME_DIR="$runtime" "$prefix/bin/fpctl" materialize \
+  "$runtime/fuse-promise/promise-1/docs/hello.txt" "$runtime/out"
+cat "$runtime/out/hello.txt"
+```
+
 ## Runtime Requirements
 
 Default user-session mount:

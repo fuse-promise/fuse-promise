@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 static const char kData[] = "hello from fuse-promise example\n";
+static const int64_t kMtimeNsec = 1700000000000000000LL;
 static volatile sig_atomic_t keep_running = 1;
 
 static void stop_provider(int signal_number) {
@@ -21,7 +22,8 @@ static fp_status_t read_file(const fp_read_request_t *request,
     if (request == NULL || response == NULL || response->buffer == NULL) {
         return FP_ERR_INVALID_ARGUMENT;
     }
-    if (strcmp(request->node_id, "example-file") != 0) {
+    if (strcmp(request->node_id, "example-file") != 0 ||
+        strcmp(request->relative_path, "docs/hello.txt") != 0) {
         return FP_ERR_NOT_FOUND;
     }
 
@@ -78,10 +80,19 @@ int main(int argc, char **argv) {
         fail("fp_promise_builder_new", status);
     }
 
+    fp_node_attr_t dir_attr = FP_NODE_ATTR_INIT;
+    dir_attr.mode = 0755;
+    dir_attr.mtime_nsec = kMtimeNsec;
+    status = fp_promise_add_dir(builder, "docs", &dir_attr, "example-dir");
+    if (status != FP_OK) {
+        fail("fp_promise_add_dir", status);
+    }
+
     fp_node_attr_t file_attr = FP_NODE_ATTR_INIT;
     file_attr.mode = 0644;
     file_attr.size = strlen(kData);
-    status = fp_promise_add_file(builder, "hello.txt", &file_attr,
+    file_attr.mtime_nsec = kMtimeNsec;
+    status = fp_promise_add_file(builder, "docs/hello.txt", &file_attr,
                                  "example-file");
     if (status != FP_OK) {
         fail("fp_promise_add_file", status);

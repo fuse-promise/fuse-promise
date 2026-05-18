@@ -109,8 +109,13 @@ for _ in $(seq 1 100); do
 done
 [ -n "$visible_path" ] || fail "provider did not print visible path"
 
-promise_file="$visible_path/hello.txt"
+promise_file="$visible_path/docs/hello.txt"
 test -f "$promise_file" || fail "promised file is not visible"
+stat -c '%F %s %a %Y' "$visible_path/docs" "$promise_file" > "$work_dir/stat.out"
+grep -q '^directory 0 755 1700000000$' "$work_dir/stat.out" \
+    || fail "promised directory attributes were not visible"
+grep -q '^regular file 32 644 1700000000$' "$work_dir/stat.out" \
+    || fail "promised file attributes were not visible"
 
 cat "$promise_file" > "$work_dir/read.out"
 cmp "$expected_file" "$work_dir/read.out" >/dev/null \
