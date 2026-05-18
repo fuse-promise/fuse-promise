@@ -205,10 +205,11 @@ fp_status_t fp_materialize(
 The current implementation routes `fp_promise_commit()` through private daemon
 IPC and returns `FP_ERR_UNAVAILABLE` until the daemon reports a commit-ready
 FUSE namespace. When commit-ready, the daemon owns the namespace and may return
-the visible Promise path. `fp_materialize()` supports single-file materialize
-with `FP_CONFLICT_FAIL`; directory materialize, overwrite/rename policies,
-progress, and cancellation remain under development. The public library must
-not fabricate visible FUSE paths from client-local state.
+the visible Promise path. `fp_materialize()` supports file and directory
+subtree materialize with `FP_CONFLICT_FAIL`; overwrite/rename policies,
+progress, cancellation, and materialized-read passthrough remain under
+development. The public library must not fabricate visible FUSE paths from
+client-local state.
 
 ## String and Buffer Rules
 

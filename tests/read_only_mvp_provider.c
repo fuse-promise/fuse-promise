@@ -6,8 +6,30 @@
 #include <string.h>
 #include <unistd.h>
 
-static const char kData[] = "hello from fuse-promise\n";
+typedef struct file_data {
+    const char *node_id;
+    const char *relative_path;
+    const char *data;
+} file_data_t;
+
+static const file_data_t kFiles[] = {
+    {"remote-file-1", "docs/readme.txt", "hello from fuse-promise\n"},
+    {"remote-file-2", "docs/guides/setup.txt", "setup guide\n"},
+};
 static volatile sig_atomic_t keep_running = 1;
+
+static const file_data_t *find_file(const char *node_id,
+                                    const char *relative_path) {
+    size_t count = sizeof(kFiles) / sizeof(kFiles[0]);
+    for (size_t index = 0; index < count; index++) {
+        if (strcmp(kFiles[index].node_id, node_id) == 0 &&
+            strcmp(kFiles[index].relative_path, relative_path) == 0) {
+            return &kFiles[index];
+        }
+    }
+
+    return NULL;
+}
 
 static void stop_provider(int signal_number) {
     (void)signal_number;
@@ -22,8 +44,9 @@ static fp_status_t read_file(const fp_read_request_t *request,
         log_file == NULL) {
         return FP_ERR_INVALID_ARGUMENT;
     }
-    if (strcmp(request->node_id, "remote-file-1") != 0 ||
-        strcmp(request->relative_path, "docs/readme.txt") != 0) {
+    const file_data_t *file =
+        find_file(request->node_id, request->relative_path);
+    if (file == NULL) {
         return FP_ERR_INVALID_ARGUMENT;
     }
 
@@ -31,7 +54,7 @@ static fp_status_t read_file(const fp_read_request_t *request,
             (unsigned long long)request->offset, request->length);
     fflush(log_file);
 
-    size_t size = strlen(kData);
+    size_t size = strlen(file->data);
     if (request->offset >= size) {
         response->bytes_written = 0;
         return FP_OK;
@@ -43,7 +66,7 @@ static fp_status_t read_file(const fp_read_request_t *request,
         count = response->buffer_len;
     }
 
-    memcpy(response->buffer, kData + request->offset, count);
+    memcpy(response->buffer, file->data + request->offset, count);
     response->bytes_written = count;
     return FP_OK;
 }
@@ -101,14 +124,30 @@ int main(int argc, char **argv) {
     if (status != FP_OK) {
         fail("fp_promise_add_dir", status);
     }
+    status =
+        fp_promise_add_dir(builder, "docs/guides", &dir_attr, "remote-dir-2");
+    if (status != FP_OK) {
+        fail("fp_promise_add_dir nested", status);
+    }
+    status = fp_promise_add_dir(builder, "docs/empty", &dir_attr,
+                                "remote-dir-empty");
+    if (status != FP_OK) {
+        fail("fp_promise_add_dir empty", status);
+    }
 
     fp_node_attr_t file_attr = FP_NODE_ATTR_INIT;
     file_attr.mode = 0644;
-    file_attr.size = strlen(kData);
+    file_attr.size = strlen(kFiles[0].data);
     status = fp_promise_add_file(builder, "docs/readme.txt", &file_attr,
                                  "remote-file-1");
     if (status != FP_OK) {
         fail("fp_promise_add_file", status);
+    }
+    file_attr.size = strlen(kFiles[1].data);
+    status = fp_promise_add_file(builder, "docs/guides/setup.txt", &file_attr,
+                                 "remote-file-2");
+    if (status != FP_OK) {
+        fail("fp_promise_add_file nested", status);
     }
 
     char path[4096];

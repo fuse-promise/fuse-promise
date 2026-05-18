@@ -242,8 +242,8 @@ Minimum message families:
 - `ProviderReadResponse`. Implemented as bounded private message helpers.
 - Provider disconnect propagation. Implemented for connection-scoped provider
   registrations.
-- `MaterializeFile`. Implemented for single files with fail-on-conflict
-  behavior.
+- `Materialize`. Implemented for files and directory subtrees with
+  fail-on-conflict behavior.
 - `MaterializeCancel`.
 - `MaterializeStatus`.
 - Structured error response.
@@ -318,7 +318,8 @@ Initial commands:
 - `fpctl status`. Implemented.
 - `fpctl list`. Implemented.
 - `fpctl inspect <promise-path>`. Planned.
-- `fpctl materialize <promise-path> <target-dir>`. Planned.
+- `fpctl materialize <promise-path> <target-dir>`. Implemented for files and
+  directory subtrees with fail-on-conflict behavior.
 - `fpctl destroy <promise-path>`. Planned.
 
 `fpctl` remains administrative and diagnostic. It is not the primary
@@ -342,8 +343,8 @@ second provider protocol for materialize.
 
 Materialize implementation order:
 
-1. Single file.
-2. Recursive directory tree.
+1. Single file. Implemented.
+2. Recursive directory tree. Implemented.
 3. Conflict policies.
 4. Progress.
 5. Cancellation.

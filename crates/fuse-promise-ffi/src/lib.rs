@@ -694,6 +694,7 @@ fn io_to_ffi(error: io::Error) -> fp_status_t {
         io::ErrorKind::NotFound
         | io::ErrorKind::ConnectionRefused
         | io::ErrorKind::AddrNotAvailable => FP_ERR_UNAVAILABLE,
+        io::ErrorKind::BrokenPipe => FP_ERR_PROVIDER_GONE,
         io::ErrorKind::PermissionDenied => FP_ERR_PERMISSION,
         io::ErrorKind::TimedOut => FP_ERR_TIMEOUT,
         _ => FP_ERR_IO,
@@ -745,6 +746,14 @@ mod tests {
         assert_eq!(response.bytes, b"abc");
 
         helper.shutdown();
+    }
+
+    #[test]
+    fn provider_gone_io_maps_to_provider_gone_status() {
+        assert_eq!(
+            io_to_ffi(io::Error::new(io::ErrorKind::BrokenPipe, "provider gone")),
+            FP_ERR_PROVIDER_GONE
+        );
     }
 
     #[test]

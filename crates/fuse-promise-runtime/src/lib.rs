@@ -187,6 +187,34 @@ impl PromiseTree {
             .ok()
             .and_then(|path| self.nodes.get(&path))
     }
+
+    pub fn subtree_nodes(&self, relative_path: &str) -> Result<Vec<PromiseNode>> {
+        let root_path = normalize_relative_path(relative_path)?;
+        if !self.nodes.contains_key(&root_path) {
+            return Err(Status::NotFound);
+        }
+
+        let mut nodes = Vec::new();
+        self.collect_subtree_nodes(&root_path, &mut nodes)?;
+        Ok(nodes)
+    }
+
+    fn collect_subtree_nodes(
+        &self,
+        relative_path: &str,
+        nodes: &mut Vec<PromiseNode>,
+    ) -> Result<()> {
+        let node = self.nodes.get(relative_path).ok_or(Status::NotFound)?;
+        nodes.push(node.clone());
+
+        if node.kind == NodeKind::Directory {
+            for child_path in self.children.get(relative_path).ok_or(Status::NotFound)? {
+                self.collect_subtree_nodes(child_path, nodes)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -553,9 +581,6 @@ impl Runtime {
             .nodes
             .get_mut(&normalized_path)
             .ok_or(Status::NotFound)?;
-        if node.kind != NodeKind::File {
-            return Err(Status::InvalidArgument);
-        }
         let Some(path) = materialized_path.to_str() else {
             return Err(Status::InvalidArgument);
         };
@@ -819,6 +844,41 @@ mod tests {
                 .cloned()
                 .collect::<Vec<_>>(),
             vec!["missing/file.txt".to_owned()]
+        );
+    }
+
+    #[test]
+    fn promise_tree_returns_stable_subtree_nodes() {
+        let mut runtime = Runtime::new();
+        let provider = runtime.register_provider();
+        let mut builder = sample_file_builder(provider, "remote-file-1");
+        builder
+            .add_dir("docs/guides", NodeAttr::new(0o755, 0, 0), "remote-dir-2")
+            .unwrap();
+        builder
+            .add_file(
+                "docs/guides/setup.txt",
+                NodeAttr::new(0o644, 5, 0),
+                "remote-file-2",
+            )
+            .unwrap();
+        let tree = runtime.commit_promise(builder).unwrap();
+
+        let subtree = tree
+            .subtree_nodes("docs")
+            .unwrap()
+            .into_iter()
+            .map(|node| node.relative_path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            subtree,
+            vec![
+                "docs".to_owned(),
+                "docs/guides".to_owned(),
+                "docs/guides/setup.txt".to_owned(),
+                "docs/readme.txt".to_owned(),
+            ]
         );
     }
 

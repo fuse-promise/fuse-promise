@@ -44,8 +44,10 @@ provider_out="$work_dir/provider.out"
 provider_err="$work_dir/provider.err"
 provider_bin="$work_dir/read-only-mvp-provider"
 expected_file="$work_dir/expected.txt"
+expected_tree="$work_dir/expected-tree"
 copy_file="$work_dir/copied.txt"
 materialize_dir="$work_dir/materialized"
+materialize_tree_dir="$work_dir/materialized-tree"
 daemon_pid=
 provider_pid=
 
@@ -68,7 +70,10 @@ trap cleanup EXIT
 
 mkdir -m 700 "$runtime_dir"
 mkdir "$materialize_dir"
+mkdir -p "$expected_tree/docs/guides" "$expected_tree/docs/empty" "$materialize_tree_dir"
 printf 'hello from fuse-promise\n' > "$expected_file"
+cp "$expected_file" "$expected_tree/docs/readme.txt"
+printf 'setup guide\n' > "$expected_tree/docs/guides/setup.txt"
 : > "$read_log"
 
 cd "$repo_dir"
@@ -112,6 +117,8 @@ done
 [ "$visible_path" = "$mount_path/promise-1" ] || fail "unexpected visible path: $visible_path"
 
 file_path="$visible_path/docs/readme.txt"
+docs_path="$visible_path/docs"
+setup_path="$visible_path/docs/guides/setup.txt"
 
 XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" status \
     | grep -q '^mount=mounted$' || fail "fpctl status did not report mounted"
@@ -120,10 +127,14 @@ XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" list \
 
 find "$visible_path" -maxdepth 3 -printf '%y %P\n' | sort > "$work_dir/find.out"
 grep -q '^d docs$' "$work_dir/find.out" || fail "find did not see docs directory"
+grep -q '^d docs/empty$' "$work_dir/find.out" || fail "find did not see empty directory"
+grep -q '^d docs/guides$' "$work_dir/find.out" || fail "find did not see nested directory"
 grep -q '^f docs/readme.txt$' "$work_dir/find.out" || fail "find did not see promised file"
+grep -q '^f docs/guides/setup.txt$' "$work_dir/find.out" || fail "find did not see nested promised file"
 ls -la "$visible_path" "$visible_path/docs" > "$work_dir/ls.out"
-stat -c '%F %s %a' "$visible_path" "$visible_path/docs" "$file_path" > "$work_dir/stat.out"
+stat -c '%F %s %a' "$visible_path" "$visible_path/docs" "$file_path" "$setup_path" > "$work_dir/stat.out"
 grep -q '^regular file 24 644$' "$work_dir/stat.out" || fail "stat did not report promised file metadata"
+grep -q '^regular file 12 644$' "$work_dir/stat.out" || fail "stat did not report nested promised file metadata"
 
 if [ -s "$read_log" ]; then
     fail "metadata-only operations triggered provider reads"
@@ -158,6 +169,22 @@ if XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" \
 fi
 grep -q "already exists" "$work_dir/materialize-conflict.err" \
     || fail "materialize conflict did not report already exists"
+
+XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" \
+    materialize "$docs_path" "$materialize_tree_dir" > "$work_dir/materialize-tree.out"
+grep -q "^target_path=$materialize_tree_dir/docs$" "$work_dir/materialize-tree.out" \
+    || fail "directory materialize did not report expected target path"
+grep -q '^bytes_written=36$' "$work_dir/materialize-tree.out" \
+    || fail "directory materialize did not report expected byte count"
+grep -q '^files_written=2$' "$work_dir/materialize-tree.out" \
+    || fail "directory materialize did not report expected file count"
+grep -q '^directories_created=3$' "$work_dir/materialize-tree.out" \
+    || fail "directory materialize did not report expected directory count"
+diff -r "$expected_tree/docs" "$materialize_tree_dir/docs" >/dev/null \
+    || fail "directory materialize did not match expected tree"
+directory_stat=$(stat -c '%a %Y' "$materialize_tree_dir/docs" "$materialize_tree_dir/docs/guides" "$materialize_tree_dir/docs/empty")
+[ "$directory_stat" = "$(printf '755 0\n755 0\n755 0')" ] \
+    || fail "directory materialize metadata mismatch: $directory_stat"
 
 kill "$provider_pid"
 wait "$provider_pid" || true

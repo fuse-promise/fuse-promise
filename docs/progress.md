@@ -51,8 +51,8 @@ plugins, or application-specific integrations.
 - [x] `fpctl list` reports daemon-owned providers, promises, and runtime nodes
   through private IPC.
 - [x] `fp_promise_commit()` is gated on daemon commit readiness.
-- [x] `fp_materialize()` and `fpctl materialize` can materialize a single file
-  through private daemon IPC using the provider read path.
+- [x] `fp_materialize()` and `fpctl materialize` can materialize files and
+  directory subtrees through private daemon IPC using the provider read path.
 - [x] `fp_promise_commit()` has FFI coverage for the commit-ready success path
   returning `$XDG_RUNTIME_DIR/fuse-promise/<promise-id>`.
 - [x] Basic Rust and C header verification passes.
@@ -113,7 +113,7 @@ pass and one pushable commit.
 | [x] | 6 | Close G1.6 FUSE read routing | Feature-gated `open`, offset `read`, `release`, and errno mapping. | `cat` and offset `dd` request only needed byte ranges and provider errors map deterministically. |
 | [x] | 7 | Close G1.7 read-only MVP gate | End-to-end provider, commit, mount, inspect, lazy read, and disconnect behavior. | A provider-created tree is visible, metadata reads transfer no bytes, file reads route only requested ranges, and disconnect errors are deterministic. |
 | [x] | 8 | Start G2.1 single-file materialize | Private materialize IPC plus daemon file copy using the existing read path. | `fpctl materialize <promise-file> <target-dir>` writes matching file content and metadata. |
-| [ ] | 9 | Add G2.2 directory materialize | Recursive tree walk, directory creation, child file materialize, metadata application. | `diff -r` matches an expected directory tree. |
+| [x] | 9 | Add G2.2 directory materialize | Recursive tree walk, directory creation, child file materialize, metadata application. | `diff -r` matches an expected directory tree. |
 | [ ] | 10 | Harden G3 developer ABI | Header/constant/layout/symbol/panic tests and C examples. | Public ABI tests pass and examples link only through the public header and pkg-config metadata. |
 
 ## Phase 0: Foundation
@@ -270,8 +270,8 @@ Reads request only the byte ranges needed by the caller.
 
 The repeatable FUSE smoke harness covers a public C ABI provider committing a
 tree and filesystem access through `fpctl status`, `fpctl list`, `find`, `ls`,
-`stat`, offset `dd`, `cat`, `cp`, single-file materialize, provider
-disconnect, and provider-gone read failure:
+`stat`, offset `dd`, `cat`, `cp`, file materialize, directory materialize,
+provider disconnect, and provider-gone read failure:
 
 ```sh
 tests/read-only-mvp-smoke.sh
@@ -308,11 +308,11 @@ cmp <expected-file> <target-dir>/<file>
 
 ### G2.2 Directory Materialize
 
-- [ ] Walk Promise subtrees recursively.
-- [ ] Create directories.
-- [ ] Materialize child files.
-- [ ] Apply directory metadata.
-- [ ] Report partial failure with structured results.
+- [x] Walk Promise subtrees recursively.
+- [x] Create directories.
+- [x] Materialize child files.
+- [x] Apply directory metadata.
+- [x] Report partial failure with structured results.
 
 Acceptance:
 

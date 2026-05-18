@@ -178,5 +178,5 @@ fn print_help() {
     println!("commands:");
     println!("  status    Query the user-session daemon status");
     println!("  list      List daemon-owned promises and nodes");
-    println!("  materialize <promise-file> <target-dir>");
+    println!("  materialize <promise-path> <target-dir>");
 }
