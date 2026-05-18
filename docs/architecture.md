@@ -385,6 +385,9 @@ Daemon-originated FUSE read routing into that channel is still Phase 1 work.
 The daemon runtime plans reads before provider IPC. Planning resolves the
 committed Promise tree, enforces provider ownership and provider liveness,
 rejects non-file nodes, and caps read length at EOF.
+The shared daemon IPC state owns provider connection routes and pending read
+requests so read plans can be delivered to the correct provider process and
+matched to validated responses.
 
 Runtime directory validation rejects missing, relative, non-directory,
 foreign-owned, or group/other-accessible `XDG_RUNTIME_DIR` paths before mount

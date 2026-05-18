@@ -10,12 +10,15 @@ use std::os::unix::fs::FileTypeExt;
 use std::os::unix::net::UnixListener;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 pub const IPC_PROTOCOL_VERSION: u32 = 1;
 pub const MAX_FRAME_LEN: u32 = 1024 * 1024;
 pub const MAX_PROVIDER_READ_LEN: u32 = 256 * 1024;
+const PROVIDER_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DaemonStatus {
@@ -60,6 +63,7 @@ enum Request {
         provider_id: u64,
     },
     PromiseCommit(PromiseCommitBody),
+    ProviderReadResponse(ProviderReadResponseBody),
 }
 
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
@@ -74,6 +78,7 @@ enum Response {
     },
     ProviderUnregistered,
     PromiseCommitted(PromiseCommittedBody),
+    ProviderReadRequest(ProviderReadRequestBody),
     Error(ErrorBody),
 }
 
@@ -114,12 +119,6 @@ enum PromiseNodeKindBody {
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
 struct PromiseCommittedBody {
     promise_id: String,
-}
-
-#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
-enum ProviderReadMessage {
-    Request(ProviderReadRequestBody),
-    Response(ProviderReadResponseBody),
 }
 
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
@@ -307,6 +306,205 @@ pub struct ProviderReadResponse {
     pub bytes: Vec<u8>,
 }
 
+#[derive(Clone)]
+pub struct IpcState {
+    runtime: Arc<Mutex<Runtime>>,
+    provider_routes: Arc<Mutex<std::collections::BTreeMap<u64, ProviderRoute>>>,
+    pending_reads: Arc<Mutex<std::collections::BTreeMap<u64, PendingRead>>>,
+}
+
+#[derive(Clone)]
+struct ProviderRoute {
+    writer: Arc<Mutex<UnixStream>>,
+}
+
+struct PendingRead {
+    provider_id: u64,
+    request: ProviderReadRequest,
+    sender: mpsc::Sender<io::Result<ProviderReadResponse>>,
+}
+
+impl IpcState {
+    pub fn new(runtime: Arc<Mutex<Runtime>>) -> Self {
+        Self {
+            runtime,
+            provider_routes: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
+            pending_reads: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
+        }
+    }
+
+    pub fn runtime(&self) -> Arc<Mutex<Runtime>> {
+        Arc::clone(&self.runtime)
+    }
+
+    pub fn route_provider_read(
+        &self,
+        request: ProviderReadRequest,
+    ) -> io::Result<ProviderReadResponse> {
+        let request_body = request.clone().into_body()?;
+        let request_id = request_body.request_id;
+        let provider_id = request_body.provider_id;
+        let route = {
+            let routes = self
+                .provider_routes
+                .lock()
+                .map_err(|_| io::Error::other("provider route lock poisoned"))?;
+            routes
+                .get(&request.provider_id)
+                .cloned()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "provider not connected"))?
+        };
+
+        let (sender, receiver) = mpsc::channel();
+        {
+            let mut pending = self
+                .pending_reads
+                .lock()
+                .map_err(|_| io::Error::other("provider pending lock poisoned"))?;
+            if pending
+                .insert(
+                    request.request_id,
+                    PendingRead {
+                        provider_id: request.provider_id,
+                        request,
+                        sender,
+                    },
+                )
+                .is_some()
+            {
+                return Err(invalid_data("duplicate provider read request id"));
+            }
+        }
+
+        let write_result = {
+            let mut writer = route
+                .writer
+                .lock()
+                .map_err(|_| io::Error::other("provider writer lock poisoned"))?;
+            write_frame(&mut *writer, &Response::ProviderReadRequest(request_body))
+        };
+        if let Err(error) = write_result {
+            self.remove_pending_read(request_id);
+            self.disconnect_provider_id(provider_id)?;
+            return Err(error);
+        }
+
+        match receiver.recv_timeout(PROVIDER_READ_TIMEOUT) {
+            Ok(response) => response,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                self.remove_pending_read(request_id);
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "provider read response timed out",
+                ))
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "provider read response channel closed",
+            )),
+        }
+    }
+
+    fn register_provider_route(&self, provider_id: u64, stream: &UnixStream) -> io::Result<()> {
+        let route = ProviderRoute {
+            writer: Arc::new(Mutex::new(stream.try_clone()?)),
+        };
+        self.provider_routes
+            .lock()
+            .map_err(|_| io::Error::other("provider route lock poisoned"))?
+            .insert(provider_id, route);
+        Ok(())
+    }
+
+    fn complete_provider_read(
+        &self,
+        registered_providers: &[fuse_promise_runtime::ProviderId],
+        response: ProviderReadResponseBody,
+    ) -> io::Result<()> {
+        let response = ProviderReadResponse::from_body(response)?;
+        let pending = {
+            let mut pending_reads = self
+                .pending_reads
+                .lock()
+                .map_err(|_| io::Error::other("provider pending lock poisoned"))?;
+            pending_reads.remove(&response.request_id).ok_or_else(|| {
+                invalid_data("provider read response does not match a pending request")
+            })?
+        };
+        let owns_provider = registered_providers
+            .iter()
+            .any(|provider_id| provider_id.raw() == pending.provider_id);
+        let result = if owns_provider {
+            validate_provider_read_response_for_request(&pending.request, &response)
+                .map(|_| response)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "provider read response came from the wrong provider connection",
+            ))
+        };
+
+        let _ = pending.sender.send(result);
+        Ok(())
+    }
+
+    fn disconnect_provider(&self, provider_id: fuse_promise_runtime::ProviderId) -> io::Result<()> {
+        self.disconnect_provider_id(provider_id.raw())
+    }
+
+    fn disconnect_provider_id(&self, provider_id: u64) -> io::Result<()> {
+        self.provider_routes
+            .lock()
+            .map_err(|_| io::Error::other("provider route lock poisoned"))?
+            .remove(&provider_id);
+
+        let Some(provider_id_value) = fuse_promise_runtime::ProviderId::from_raw(provider_id)
+        else {
+            return Ok(());
+        };
+        {
+            let mut runtime = self
+                .runtime
+                .lock()
+                .map_err(|_| io::Error::other("runtime lock poisoned"))?;
+            let _ = runtime.unregister_provider(provider_id_value);
+        }
+        self.fail_provider_pending_reads(provider_id, io::ErrorKind::BrokenPipe);
+        Ok(())
+    }
+
+    fn fail_provider_pending_reads(&self, provider_id: u64, error_kind: io::ErrorKind) {
+        let pending_reads = {
+            let mut pending = match self.pending_reads.lock() {
+                Ok(pending) => pending,
+                Err(_) => return,
+            };
+            let request_ids = pending
+                .iter()
+                .filter_map(|(request_id, pending)| {
+                    (pending.provider_id == provider_id).then_some(*request_id)
+                })
+                .collect::<Vec<_>>();
+            request_ids
+                .into_iter()
+                .filter_map(|request_id| pending.remove(&request_id))
+                .collect::<Vec<_>>()
+        };
+
+        for pending in pending_reads {
+            let _ = pending
+                .sender
+                .send(Err(io::Error::new(error_kind, "provider disconnected")));
+        }
+    }
+
+    fn remove_pending_read(&self, request_id: u64) {
+        if let Ok(mut pending) = self.pending_reads.lock() {
+            pending.remove(&request_id);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderReadStatus {
     Ok,
@@ -395,7 +593,7 @@ where
 {
     write_frame(
         writer,
-        &ProviderReadMessage::Request(request.clone().into_body()?),
+        &Response::ProviderReadRequest(request.clone().into_body()?),
     )
 }
 
@@ -403,12 +601,13 @@ pub fn read_provider_read_request<R>(reader: &mut R) -> io::Result<Option<Provid
 where
     R: Read,
 {
-    match read_frame::<_, ProviderReadMessage>(reader)? {
-        Some(ProviderReadMessage::Request(request)) => {
+    match read_frame::<_, Response>(reader)? {
+        Some(Response::ProviderReadRequest(request)) => {
             ProviderReadRequest::from_body(request).map(Some)
         }
-        Some(ProviderReadMessage::Response(_)) => Err(invalid_data(
-            "provider read response received where request was expected",
+        Some(Response::Error(error)) => Err(error_to_io(error)),
+        Some(_) => Err(invalid_data(
+            "non-provider-read response received where request was expected",
         )),
         None => Ok(None),
     }
@@ -423,7 +622,7 @@ where
 {
     write_frame(
         writer,
-        &ProviderReadMessage::Response(response.clone().into_body()?),
+        &Request::ProviderReadResponse(response.clone().into_body()?),
     )
 }
 
@@ -431,12 +630,12 @@ pub fn read_provider_read_response<R>(reader: &mut R) -> io::Result<Option<Provi
 where
     R: Read,
 {
-    match read_frame::<_, ProviderReadMessage>(reader)? {
-        Some(ProviderReadMessage::Response(response)) => {
+    match read_frame::<_, Request>(reader)? {
+        Some(Request::ProviderReadResponse(response)) => {
             ProviderReadResponse::from_body(response).map(Some)
         }
-        Some(ProviderReadMessage::Request(_)) => Err(invalid_data(
-            "provider read request received where response was expected",
+        Some(_) => Err(invalid_data(
+            "non-provider-read request received where response was expected",
         )),
         None => Ok(None),
     }
@@ -472,11 +671,15 @@ fn connect_and_hello(socket_path: &Path) -> io::Result<UnixStream> {
 }
 
 pub fn serve_status(runtime: Arc<Mutex<Runtime>>) -> io::Result<()> {
-    let socket_path = default_control_socket_path().map_err(status_to_io)?;
-    bind_status_socket(&socket_path, runtime)
+    serve_state(IpcState::new(runtime))
 }
 
-fn bind_status_socket(socket_path: &Path, runtime: Arc<Mutex<Runtime>>) -> io::Result<()> {
+pub fn serve_state(state: IpcState) -> io::Result<()> {
+    let socket_path = default_control_socket_path().map_err(status_to_io)?;
+    bind_status_socket(&socket_path, state)
+}
+
+fn bind_status_socket(socket_path: &Path, state: IpcState) -> io::Result<()> {
     if let Some(parent) = socket_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -486,9 +689,9 @@ fn bind_status_socket(socket_path: &Path, runtime: Arc<Mutex<Runtime>>) -> io::R
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                let runtime = Arc::clone(&runtime);
+                let state = state.clone();
                 thread::spawn(move || {
-                    let _ = handle_client(stream, &runtime);
+                    let _ = handle_client_with_state(stream, &state);
                 });
             }
             Err(error) => return Err(error),
@@ -498,19 +701,25 @@ fn bind_status_socket(socket_path: &Path, runtime: Arc<Mutex<Runtime>>) -> io::R
     Ok(())
 }
 
-fn handle_client(mut stream: UnixStream, runtime: &Arc<Mutex<Runtime>>) -> io::Result<()> {
+#[cfg(test)]
+fn handle_client(stream: UnixStream, runtime: &Arc<Mutex<Runtime>>) -> io::Result<()> {
+    let state = IpcState::new(Arc::clone(runtime));
+    handle_client_with_state(stream, &state)
+}
+
+fn handle_client_with_state(mut stream: UnixStream, state: &IpcState) -> io::Result<()> {
     validate_peer(&stream)?;
 
     let mut registered_providers = Vec::new();
-    let result = handle_client_requests(&mut stream, runtime, &mut registered_providers);
-    let disconnect_result = disconnect_registered_providers(runtime, &registered_providers);
+    let result = handle_client_requests(&mut stream, state, &mut registered_providers);
+    let disconnect_result = disconnect_registered_providers(state, &registered_providers);
 
     result.and(disconnect_result)
 }
 
 fn handle_client_requests(
     stream: &mut UnixStream,
-    runtime: &Arc<Mutex<Runtime>>,
+    state: &IpcState,
     registered_providers: &mut Vec<fuse_promise_runtime::ProviderId>,
 ) -> io::Result<()> {
     let mut negotiated = false;
@@ -538,7 +747,8 @@ fn handle_client_requests(
                 }
             }
             Request::Status if negotiated => {
-                let runtime = runtime
+                let runtime = state
+                    .runtime
                     .lock()
                     .map_err(|_| io::Error::other("runtime lock poisoned"))?;
                 let status = DaemonStatus::from_runtime(&runtime).map_err(status_to_io)?;
@@ -552,10 +762,13 @@ fn handle_client_requests(
                 )?;
             }
             Request::ProviderRegister if negotiated => {
-                let mut runtime = runtime
+                let mut runtime = state
+                    .runtime
                     .lock()
                     .map_err(|_| io::Error::other("runtime lock poisoned"))?;
                 let provider_id = runtime.register_provider();
+                drop(runtime);
+                state.register_provider_route(provider_id.raw(), stream)?;
                 registered_providers.push(provider_id);
                 write_frame(
                     stream,
@@ -582,12 +795,15 @@ fn handle_client_requests(
                     continue;
                 };
 
-                let mut runtime = runtime
+                let mut runtime = state
+                    .runtime
                     .lock()
                     .map_err(|_| io::Error::other("runtime lock poisoned"))?;
                 match runtime.unregister_provider(provider_id) {
                     Ok(()) => {
+                        drop(runtime);
                         registered_providers.retain(|id| *id != provider_id);
+                        state.disconnect_provider(provider_id)?;
                         write_frame(stream, &Response::ProviderUnregistered)?;
                     }
                     Err(status) => write_status_error(stream, status)?,
@@ -601,13 +817,23 @@ fn handle_client_requests(
                 )?;
             }
             Request::PromiseCommit(request) if negotiated => {
-                handle_promise_commit(stream, runtime, request)?;
+                handle_promise_commit(stream, &state.runtime, request)?;
             }
             Request::PromiseCommit(_) => {
                 write_error(
                     stream,
                     ErrorCode::InvalidRequest,
                     "client must send hello before promise commit",
+                )?;
+            }
+            Request::ProviderReadResponse(response) if negotiated => {
+                state.complete_provider_read(registered_providers, response)?;
+            }
+            Request::ProviderReadResponse(_) => {
+                write_error(
+                    stream,
+                    ErrorCode::InvalidRequest,
+                    "client must send hello before provider read response",
                 )?;
             }
         }
@@ -617,18 +843,15 @@ fn handle_client_requests(
 }
 
 fn disconnect_registered_providers(
-    runtime: &Arc<Mutex<Runtime>>,
+    state: &IpcState,
     provider_ids: &[fuse_promise_runtime::ProviderId],
 ) -> io::Result<()> {
     if provider_ids.is_empty() {
         return Ok(());
     }
 
-    let mut runtime = runtime
-        .lock()
-        .map_err(|_| io::Error::other("runtime lock poisoned"))?;
     for provider_id in provider_ids {
-        let _ = runtime.unregister_provider(*provider_id);
+        state.disconnect_provider(*provider_id)?;
     }
 
     Ok(())
@@ -1396,6 +1619,121 @@ mod tests {
         );
 
         let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn routes_provider_read_requests_to_registered_provider_connection() {
+        let (provider_client, provider_server) = UnixStream::pair().unwrap();
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let state = IpcState::new(Arc::clone(&runtime));
+        let server_state = state.clone();
+        let server_thread =
+            thread::spawn(move || handle_client_with_state(provider_server, &server_state));
+        let mut provider = ProviderConnection::from_stream_for_test(provider_client, 1);
+
+        send_hello(&mut provider.stream);
+        write_frame(&mut provider.stream, &Request::ProviderRegister).unwrap();
+        let provider_id = match read_frame(&mut provider.stream).unwrap().unwrap() {
+            Response::ProviderRegistered { provider_id } => provider_id,
+            other => panic!("unexpected response: {other:?}"),
+        };
+
+        let route_state = state.clone();
+        let read_thread = thread::spawn(move || {
+            route_state.route_provider_read(ProviderReadRequest {
+                request_id: 99,
+                provider_id,
+                promise_id: "promise-1".to_owned(),
+                relative_path: "docs/readme.txt".to_owned(),
+                provider_node_id: "remote-file-1".to_owned(),
+                offset: 3,
+                length: 6,
+            })
+        });
+
+        let request = provider.read_provider_read_request().unwrap().unwrap();
+        assert_eq!(request.request_id, 99);
+        assert_eq!(request.provider_id, provider_id);
+        assert_eq!(request.offset, 3);
+        provider
+            .write_provider_read_response(&ProviderReadResponse {
+                request_id: request.request_id,
+                status: ProviderReadStatus::Ok,
+                bytes: b"answer".to_vec(),
+            })
+            .unwrap();
+
+        let response = read_thread.join().unwrap().unwrap();
+        assert_eq!(response.status, ProviderReadStatus::Ok);
+        assert_eq!(response.bytes, b"answer");
+
+        provider.shutdown().unwrap();
+        server_thread.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn route_provider_read_rejects_wrong_provider_response_connection() {
+        let (provider_one_client, provider_one_server) = UnixStream::pair().unwrap();
+        let (provider_two_client, provider_two_server) = UnixStream::pair().unwrap();
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let state = IpcState::new(Arc::clone(&runtime));
+        let provider_one_state = state.clone();
+        let provider_two_state = state.clone();
+        let provider_one_thread = thread::spawn(move || {
+            handle_client_with_state(provider_one_server, &provider_one_state)
+        });
+        let provider_two_thread = thread::spawn(move || {
+            handle_client_with_state(provider_two_server, &provider_two_state)
+        });
+        let mut provider_one = ProviderConnection::from_stream_for_test(provider_one_client, 1);
+        let mut provider_two = ProviderConnection::from_stream_for_test(provider_two_client, 2);
+
+        send_hello(&mut provider_one.stream);
+        write_frame(&mut provider_one.stream, &Request::ProviderRegister).unwrap();
+        let provider_one_id = match read_frame(&mut provider_one.stream).unwrap().unwrap() {
+            Response::ProviderRegistered { provider_id } => provider_id,
+            other => panic!("unexpected response: {other:?}"),
+        };
+        send_hello(&mut provider_two.stream);
+        write_frame(&mut provider_two.stream, &Request::ProviderRegister).unwrap();
+        let _provider_two_id = match read_frame(&mut provider_two.stream).unwrap().unwrap() {
+            Response::ProviderRegistered { provider_id } => provider_id,
+            other => panic!("unexpected response: {other:?}"),
+        };
+
+        let route_state = state.clone();
+        let read_thread = thread::spawn(move || {
+            route_state.route_provider_read(ProviderReadRequest {
+                request_id: 12345,
+                provider_id: provider_one_id,
+                promise_id: "promise-1".to_owned(),
+                relative_path: "docs/readme.txt".to_owned(),
+                provider_node_id: "remote-file-1".to_owned(),
+                offset: 0,
+                length: 1,
+            })
+        });
+        let request = provider_one.read_provider_read_request().unwrap().unwrap();
+        assert_eq!(request.request_id, 12345);
+
+        write_frame(
+            &mut provider_two.stream,
+            &Request::ProviderReadResponse(ProviderReadResponseBody {
+                request_id: 12345,
+                status: ProviderReadStatusBody::Ok,
+                bytes: Vec::new(),
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            read_thread.join().unwrap().unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+
+        provider_one.shutdown().unwrap();
+        provider_two.shutdown().unwrap();
+        provider_one_thread.join().unwrap().unwrap();
+        provider_two_thread.join().unwrap().unwrap();
     }
 
     #[test]

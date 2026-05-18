@@ -1,4 +1,4 @@
-use fuse_promise_ipc::serve_status;
+use fuse_promise_ipc::{serve_state, IpcState};
 use fuse_promise_runtime::{default_control_socket_path, default_mount_path, Runtime};
 use std::env;
 use std::process::ExitCode;
@@ -39,7 +39,8 @@ fn main() -> ExitCode {
             }
 
             let runtime = Arc::new(Mutex::new(Runtime::new()));
-            match serve_status(runtime) {
+            let ipc_state = IpcState::new(runtime);
+            match serve_state(ipc_state) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("fuse-promised: {error}");

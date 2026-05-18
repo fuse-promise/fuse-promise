@@ -140,6 +140,8 @@ The runtime can plan file reads from committed Promise metadata. A read plan
 resolves the owning provider, provider node id, normalized relative path,
 offset, and capped length, and rejects missing nodes, directories,
 provider-gone state, and disconnected providers before provider IPC is used.
+The daemon IPC state can then route that read request over the registered
+provider connection and match the response by request id.
 
 ## Lifecycle
 

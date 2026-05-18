@@ -153,7 +153,7 @@ cargo test -p fuse-promise-ipc --locked
 
 - [x] Register providers through `libfusepromise.so` and private IPC.
 - [x] Keep a live provider session table in the daemon.
-- [ ] Route daemon read requests back to the provider process.
+- [x] Route daemon read requests back to the provider process.
 - [x] Dispatch read requests to the provider's public C callback inside the
   provider process.
 - [x] Enforce provider ownership for committed trees and read requests.

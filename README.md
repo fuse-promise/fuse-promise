@@ -18,8 +18,9 @@ private provider read request/response message helpers with connection-scoped
 provider disconnect propagation. `fp_provider_register()` now registers with
 the daemon through private IPC, and provider read requests received on that
 connection are dispatched to the public C callback. The runtime can plan
-provider-owned file reads with provider-gone and EOF handling. The FUSE
-adapter, daemon read routing, and materialize engine are still under
+provider-owned file reads with provider-gone and EOF handling, and the daemon
+IPC state can route provider read requests over registered provider
+connections. The FUSE adapter and materialize engine are still under
 development. The public commit and materialize calls currently return
 `FP_ERR_UNAVAILABLE` rather than claiming a visible FUSE path that does not
 exist yet.
