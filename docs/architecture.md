@@ -370,11 +370,13 @@ ranges, and target paths before mutating daemon state.
 
 The current implementation includes bounded framed status, provider
 register/unregister, Promise metadata commit IPC, and provider read
-request/response message helpers over private Unix sockets. Read routing and
-materialize IPC are still Phase 1/Phase 2 work and must remain private to
-`libfusepromise.so` and `fuse-promised`. Registered providers are scoped to the
-IPC connection that registered them; closing that connection marks those
-providers disconnected in the daemon runtime.
+request/response message helpers over private Unix sockets. Daemon-side
+provider read routing exists inside the private IPC state; real mounted FUSE
+read verification remains a Phase 1 gate, and materialize IPC remains Phase 2
+work. Both paths must remain private to `libfusepromise.so` and
+`fuse-promised`. Registered providers are scoped to the IPC connection that
+registered them; closing that connection marks those providers disconnected in
+the daemon runtime.
 
 The public library now registers providers through this private IPC. It may
 still keep builder metadata before commit, but it must not create a committed

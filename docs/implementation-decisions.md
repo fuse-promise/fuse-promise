@@ -22,7 +22,8 @@ application-specific integrations.
 - Runtime model: daemon-owned metadata, provider sessions, node ids, inodes,
   materialize state, and cache state.
 - Async model: no Tokio or async runtime in the first read-only MVP.
-- CLI parser: `clap`.
+- CLI parser: manual parsing is acceptable for the current tiny command set;
+  `clap` is the approved parser once commands or options expand.
 - Logging: `tracing` and `tracing-subscriber`.
 - Internal errors: `thiserror`.
 - Tests: `tempfile` for isolated runtime directories and filesystem tests.
@@ -75,7 +76,7 @@ development metadata so `fuser` can link the libfuse3 mount implementation.
 | FUSE adapter | `fuser` | `0.17.0` | Phase 1 | Use `default-features = false`, `libfuse3`, and `abi-7-31`. This targets libfuse3/fusermount3 while keeping Promise semantics in our runtime. |
 | IPC encoding | `bincode` | `2.0.1` | Phase 1 | Use only for private IPC. Public consumers must never depend on the wire format. |
 | Unix/POSIX checks | `rustix` | `1.1` | Phase 1 | Use for peer credentials, runtime directory validation, and safer Unix filesystem/process operations. |
-| CLI | `clap` | `4.5` | Phase 1 | Replace manual argument parsing for `fpctl` and `fuse-promised`. |
+| CLI | `clap` | `4.5` | Phase 1 | Approved for `fpctl` and `fuse-promised` once the CLI expands beyond the current tiny command set. |
 | Logging | `tracing` | `0.1` | Phase 1 | Structured daemon and CLI events. |
 | Logging subscriber | `tracing-subscriber` | `0.3` | Phase 1 | Foreground/debug logging and future systemd-friendly formatting. |
 | Internal errors | `thiserror` | `2.0` | Phase 1 | Runtime/IPC/daemon internal errors; public ABI still returns `fp_status_t`. |
@@ -83,6 +84,50 @@ development metadata so `fuser` can link the libfuse3 mount implementation.
 
 These versions are declared in the workspace manifest so implementation work
 uses one dependency set.
+
+## Dependency Freeze
+
+The Phase 1 dependency set is frozen. New runtime, IPC, daemon, FFI, or CLI
+dependencies must not be added casually while implementing read-only behavior.
+If a new dependency becomes necessary, update this document first with the
+reason, owning crate, feature gate, rejected alternatives, and verification
+impact.
+
+Reproducibility is enforced with `Cargo.lock` and `--locked` verification
+commands. The manifest keeps compatible version requirements instead of exact
+`=x.y.z` pins unless a dependency-specific reason requires exact pinning. Do
+not run `cargo update` as part of ordinary feature work.
+
+Rules:
+
+- Keep the default workspace build independent of system FUSE development
+  packages. `cargo check --workspace --locked` and `cargo test --workspace
+  --locked` must work without `pkg-config` or libfuse3 headers.
+- Keep `fuser` isolated to `fuse-promise-daemon` behind the `fuse-mount`
+  feature. Runtime, IPC, FFI, and `fpctl` must not import FUSE crate types.
+- Use `bincode` only for private IPC. It is not an ABI, file format, or public
+  compatibility promise.
+- Use `rustix` only for Unix/POSIX checks where the standard library does not
+  provide the required ownership, permission, credential, or socket behavior.
+- Keep `tempfile` as a dev-dependency for isolated tests.
+- `clap`, `tracing`, `tracing-subscriber`, and `thiserror` are approved
+  dependencies, but individual crates should add them only when the code starts
+  using structured CLI parsing, logging, or internal error enums.
+- Do not add Tokio, another async runtime, D-Bus, HTTP clients, database
+  engines, cloud SDKs, cache libraries, `cbindgen`, or desktop integration
+  dependencies during the read-only MVP.
+
+System dependency matrix:
+
+| Scope | Required Outside Cargo | Notes |
+|---|---|---|
+| Default build and tests | Rust 1.85+ toolchain | No system FUSE development package should be required. |
+| FUSE feature build | `pkg-config`, libfuse3 development metadata | Required by `fuser` with the `libfuse3` feature. |
+| FUSE runtime smoke | Linux FUSE kernel support, `/dev/fuse`, `fusermount3`, `fuse3` runtime tools | Needed to verify a real user-session mount. |
+| Installed developer ABI | C compiler, C++ compiler, `pkg-config` | Used for header parsing, examples, and generated `fuse-promise.pc`. |
+
+The project targets the libfuse3/fusermount3 stack. Legacy libfuse2 is not a
+first implementation target.
 
 ## Implementation Order Lock
 
@@ -102,6 +147,12 @@ and one pushable commit.
 
 Do not start materialize or cache before the read-only FUSE path is complete
 end to end.
+
+Before adding code to any goal, identify the owning crate, keep the write scope
+inside that ownership boundary, and define the observable exit check. A change
+that crosses public ABI, private IPC, daemon runtime, and FUSE behavior should
+be split into pushable milestones unless the split would leave the system in an
+unbuildable state.
 
 ## FUSE Backend Decision
 
@@ -254,15 +305,17 @@ Rules:
 
 ## CLI Decision
 
-Use `clap` for `fpctl` and `fuse-promised` before adding more commands.
+The current `fpctl status`, `fpctl list`, and `fuse-promised --foreground`
+command surfaces may keep simple manual parsing. Introduce `clap` before adding
+option-rich commands or any command whose parsing rules are no longer trivial.
 
 Initial commands:
 
-- `fpctl status`
-- `fpctl list`
-- `fpctl inspect <promise-path>`
-- `fpctl materialize <promise-path> <target-dir>`
-- `fpctl destroy <promise-path>`
+- `fpctl status`. Implemented.
+- `fpctl list`. Implemented.
+- `fpctl inspect <promise-path>`. Planned.
+- `fpctl materialize <promise-path> <target-dir>`. Planned.
+- `fpctl destroy <promise-path>`. Planned.
 
 `fpctl` remains administrative and diagnostic. It is not the primary
 application API.

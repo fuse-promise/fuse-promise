@@ -28,9 +28,11 @@ now contains read-only `lookup`, `getattr`, `readdir`, `open`, `read`, and
 mount verification still requires system libfuse3 development metadata. The
 materialize engine is still under development. Private metadata commit is gated
 on commit readiness so disabled, unmounted, or mount-only daemon state cannot
-create invisible promises. The public commit and materialize calls currently return
-`FP_ERR_UNAVAILABLE` rather than claiming a visible FUSE path that does not
-exist yet.
+create invisible promises. `fp_promise_commit()` now routes through the daemon
+and can return a visible path only when the daemon reports a commit-ready FUSE
+namespace; default disabled or unmounted builds still return
+`FP_ERR_UNAVAILABLE`. `fp_materialize()` returns `FP_ERR_UNAVAILABLE` until
+materialize IPC and the materialize engine are implemented.
 
 The first implementation target is a read-only Promise filesystem MVP:
 

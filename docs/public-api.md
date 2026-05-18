@@ -131,8 +131,9 @@ void fp_provider_unregister(fp_provider_t *provider);
 The current implementation registers providers with `fuse-promised` through
 private daemon IPC. If the daemon is unavailable, provider registration returns
 `FP_ERR_UNAVAILABLE`. Provider read requests received on the private provider
-connection are dispatched to the registered public C callback, but daemon/FUSE
-read routing is not implemented yet.
+connection are dispatched to the registered public C callback. Daemon-side read
+routing and feature-gated FUSE callbacks exist; real mounted FUSE read
+verification remains outstanding.
 
 Promise creation:
 
@@ -201,11 +202,13 @@ fp_status_t fp_materialize(
     const fp_materialize_options_t *options);
 ```
 
-The current implementation returns `FP_ERR_UNAVAILABLE` from
-`fp_promise_commit()` and `fp_materialize()` until the daemon IPC, FUSE adapter,
-and materialize engine are implemented. The runtime crate can validate and hold
-metadata in process, but the public library must not claim a visible FUSE path
-until the daemon owns that namespace.
+The current implementation routes `fp_promise_commit()` through private daemon
+IPC and returns `FP_ERR_UNAVAILABLE` until the daemon reports a commit-ready
+FUSE namespace. When commit-ready, the daemon owns the namespace and may return
+the visible Promise path. `fp_materialize()` still returns
+`FP_ERR_UNAVAILABLE` until materialize IPC and the materialize engine are
+implemented. The public library must not fabricate visible FUSE paths from
+client-local state.
 
 ## String and Buffer Rules
 

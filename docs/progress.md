@@ -81,6 +81,39 @@ specification
   -> stable packaging
 ```
 
+## Dependency and Architecture Gate
+
+- [x] Direct implementation dependency set is documented and frozen for Phase 1.
+- [x] FUSE backend is fixed to `fuser` over libfuse3/fusermount3, behind the
+  daemon `fuse-mount` feature.
+- [x] Default workspace build remains independent of `pkg-config` and libfuse3
+  development metadata.
+- [x] No async runtime, cache library, database, HTTP, cloud SDK, desktop
+  integration, or generated-header dependency is planned for the read-only MVP.
+- [x] Crate ownership boundaries are fixed before further runtime logic work.
+
+Do not add a new dependency or widen a crate boundary while implementing a goal
+unless `docs/implementation-decisions.md` is updated first.
+
+## Immediate Implementation Queue
+
+This queue is the current goal list for turning the framework into behavior.
+Each row should become one focused implementation loop with one verification
+pass and one pushable commit.
+
+| Order | Goal | Primary Scope | Exit Check |
+|---:|---|---|---|
+| 1 | Freeze MVP visible layout | Runtime, FUSE adapter, CLI docs, and tests. | The root directory and `$XDG_RUNTIME_DIR/fuse-promise/<promise-id>` layout are documented before more FUSE behavior depends on it. |
+| 2 | Finish G1.4 public commit success path | FFI test coverage over a daemon commit-ready state; no public ABI change. | `fp_promise_commit()` returns `FP_OK`, writes `$XDG_RUNTIME_DIR/fuse-promise/promise-1`, and consumes the builder only on success. |
+| 3 | Verify G1.5 feature build gate | Environment and daemon feature build; no fallback to unsafe paths. | `pkg-config --exists fuse3` and `cargo check -p fuse-promise-daemon --features fuse-mount --locked` pass without stubs. |
+| 4 | Verify G1.5 real mount lifecycle | Feature daemon runtime with shared `XDG_RUNTIME_DIR`. | `mountpoint -q "$XDG_RUNTIME_DIR/fuse-promise"` succeeds, `fpctl status` reports mounted state, and daemon shutdown unmounts cleanly. |
+| 5 | Close G1.6 metadata-only FUSE ops | Feature-gated `lookup`, `getattr`, and `readdir` over daemon runtime. | `stat`, `ls`, and `find` work against a committed tree without provider read requests. |
+| 6 | Close G1.6 FUSE read routing | Feature-gated `open`, offset `read`, `release`, and errno mapping. | `cat` and offset `dd` request only needed byte ranges and provider errors map deterministically. |
+| 7 | Close G1.7 read-only MVP gate | End-to-end provider, commit, mount, inspect, lazy read, and disconnect behavior. | A provider-created tree is visible, metadata reads transfer no bytes, file reads route only requested ranges, and disconnect errors are deterministic. |
+| 8 | Start G2.1 single-file materialize | Private materialize IPC plus daemon file copy using the existing read path. | `fpctl materialize <promise-file> <target-dir>` writes matching file content and metadata. |
+| 9 | Add G2.2 directory materialize | Recursive tree walk, directory creation, child file materialize, metadata application. | `diff -r` matches an expected directory tree. |
+| 10 | Harden G3 developer ABI | Header/constant/layout/symbol/panic tests and C examples. | Public ABI tests pass and examples link only through the public header and pkg-config metadata. |
+
 ## Phase 0: Foundation
 
 Goal: establish the project identity, source layout, and developer-preview
@@ -183,7 +216,7 @@ Acceptance:
 - [x] Validate node type, permission bits, file size, mtime, duplicate paths,
   and parent directories.
 - [x] Commit static snapshot Promise trees.
-- [ ] Return a visible path under `$XDG_RUNTIME_DIR/fuse-promise/`.
+- [~] Return a visible path under `$XDG_RUNTIME_DIR/fuse-promise/`.
 
 Acceptance:
 
@@ -198,7 +231,7 @@ Acceptance:
 - [~] Mount `$XDG_RUNTIME_DIR/fuse-promise/`.
 - [x] Fail explicitly if `XDG_RUNTIME_DIR` is missing, not absolute, unsafe, or
   not owned by the current user.
-- [x] Cleanly unmount on daemon exit.
+- [~] Cleanly unmount on daemon exit.
 - [x] Keep mount lifecycle user-session scoped.
 
 Acceptance:
@@ -433,14 +466,20 @@ Run these before FUSE milestones:
 
 ```sh
 pkg-config --exists fuse3
+cargo check -p fuse-promise-daemon --features fuse-mount --locked
 test -e /dev/fuse
 which fusermount3
-XDG_RUNTIME_DIR="$(mktemp -d)" cargo run -p fuse-promise-daemon -- --foreground
-fpctl status
+export XDG_RUNTIME_DIR="$(mktemp -d)"
+cargo run -p fuse-promise-daemon --features fuse-mount -- --foreground &
+daemon_pid=$!
+cargo run -p fpctl -- status
 mountpoint -q "$XDG_RUNTIME_DIR/fuse-promise"
 stat "$XDG_RUNTIME_DIR/fuse-promise/<promise-id>"
 cat "$XDG_RUNTIME_DIR/fuse-promise/<promise-id>/<file>"
-fusermount3 -u "$XDG_RUNTIME_DIR/fuse-promise"
+kill "$daemon_pid"
+wait "$daemon_pid" || true
+! mountpoint -q "$XDG_RUNTIME_DIR/fuse-promise"
+fusermount3 -u "$XDG_RUNTIME_DIR/fuse-promise" || true
 ```
 
 ## Out of Scope for This Repository
