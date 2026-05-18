@@ -128,6 +128,9 @@ sockets. A provider connection closing marks its registered providers as
 disconnected and marks their available promises as provider-gone. Read routing
 and other IPC operations are still under development.
 
+`libfusepromise.so` provider registration uses this private daemon IPC and no
+longer creates authoritative provider sessions in a client-local runtime.
+
 ## Lifecycle
 
 Recommended lifecycle:

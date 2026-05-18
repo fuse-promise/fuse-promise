@@ -373,6 +373,10 @@ materialize IPC are still Phase 1/Phase 2 work and must remain private to
 IPC connection that registered them; closing that connection marks those
 providers disconnected in the daemon runtime.
 
+The public library now registers providers through this private IPC. It may
+still keep builder metadata before commit, but it must not create a committed
+client-local Promise namespace.
+
 ## Failure Model
 
 The runtime must produce deterministic failures for:

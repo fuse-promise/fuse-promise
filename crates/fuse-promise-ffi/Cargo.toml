@@ -12,4 +12,5 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
+fuse-promise-ipc = { path = "../fuse-promise-ipc" }
 fuse-promise-runtime = { path = "../fuse-promise-runtime" }

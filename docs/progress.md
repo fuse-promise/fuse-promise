@@ -32,6 +32,7 @@ plugins, or application-specific integrations.
 - [x] Private IPC can commit metadata snapshots into the daemon-owned runtime.
 - [x] Private IPC has bounded provider read request/response message helpers.
 - [x] Private IPC propagates provider disconnect on provider connection close.
+- [x] `libfusepromise.so` provider registration uses private daemon IPC.
 - [x] `fpctl status` queries the daemon when connected and falls back to
   `daemon=not-connected` when disconnected.
 - [x] `fp_promise_commit()` and `fp_materialize()` return
@@ -100,13 +101,13 @@ serve lazy read requests through provider callbacks.
 
 ### G1.1 Daemon-Owned Runtime
 
-- [ ] Move committed Promise tree ownership fully into `fuse-promised`.
-- [ ] Ensure daemon allocates visible promise ids, runtime node ids, and inode
+- [x] Move committed Promise tree ownership fully into `fuse-promised`.
+- [x] Ensure daemon allocates visible promise ids, runtime node ids, and inode
   numbers.
-- [ ] Keep client-side `libfusepromise.so` state limited to opaque handles,
+- [x] Keep client-side `libfusepromise.so` state limited to opaque handles,
   provider callbacks, builder state before commit, and private IPC connection
   state.
-- [ ] Remove or quarantine any client-side in-process runtime path that could
+- [x] Remove or quarantine any client-side in-process runtime path that could
   appear authoritative.
 
 Acceptance:
@@ -144,13 +145,13 @@ cargo test -p fuse-promise-ipc --locked
 
 ### G1.3 Provider Session Routing
 
-- [ ] Register providers through `libfusepromise.so` and private IPC.
-- [ ] Keep a live provider session table in the daemon.
+- [x] Register providers through `libfusepromise.so` and private IPC.
+- [x] Keep a live provider session table in the daemon.
 - [ ] Route daemon read requests back to the provider process.
 - [ ] Dispatch read requests to the provider's public C callback inside the
   provider process.
 - [ ] Enforce provider ownership for committed trees and read requests.
-- [ ] Mark non-materialized and non-cached promises as provider-gone when the
+- [x] Mark non-materialized and non-cached promises as provider-gone when the
   provider disconnects.
 
 Acceptance:

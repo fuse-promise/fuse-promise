@@ -58,6 +58,7 @@ dependencies = [
 name = "fuse-promise-ffi"
 version = "0.1.0"
 dependencies = [
+ "fuse-promise-ipc",
  "fuse-promise-runtime",
 ]
 

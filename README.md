@@ -15,7 +15,8 @@ Promise metadata model, C ABI entry points, initial daemon and CLI entry
 points, private framed status IPC used by `fpctl status`, private provider
 register/unregister IPC messages, private Promise metadata commit IPC, and
 private provider read request/response message helpers with connection-scoped
-provider disconnect propagation. The FUSE adapter, provider read routing, and
+provider disconnect propagation. `fp_provider_register()` now registers with
+the daemon through private IPC. The FUSE adapter, provider read routing, and
 materialize engine are still under development. The public commit and
 materialize calls currently return `FP_ERR_UNAVAILABLE` rather than claiming a
 visible FUSE path that does not exist yet.

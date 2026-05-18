@@ -128,6 +128,11 @@ fp_status_t fp_provider_register(
 void fp_provider_unregister(fp_provider_t *provider);
 ```
 
+The current implementation registers providers with `fuse-promised` through
+private daemon IPC. If the daemon is unavailable, provider registration returns
+`FP_ERR_UNAVAILABLE`. Provider read callbacks are validated by the public ABI
+but are not routed from FUSE reads yet.
+
 Promise creation:
 
 ```c

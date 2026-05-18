@@ -1,10 +1,12 @@
 #![allow(non_camel_case_types)]
 
+use fuse_promise_ipc::{connect_provider, ProviderConnection};
 use fuse_promise_runtime::{
-    default_mount_path, validate_runtime_dir_path, NodeAttr, PromiseBuilder, ProviderId, Runtime,
-    Status, API_VERSION,
+    default_control_socket_path, default_mount_path, validate_runtime_dir_path, NodeAttr,
+    PromiseBuilder, ProviderId, Status, API_VERSION,
 };
 use std::ffi::CStr;
+use std::io;
 use std::os::raw::{c_char, c_void};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
@@ -92,21 +94,20 @@ pub struct fp_context {
 pub struct fp_provider {
     inner: Arc<ContextInner>,
     id: ProviderId,
+    connection: Option<ProviderConnection>,
     _read: fp_provider_read_fn,
     _user_data: *mut c_void,
 }
 
 pub struct fp_promise_builder {
-    inner: Arc<ContextInner>,
-    provider_id: ProviderId,
     builder: Mutex<Option<PromiseBuilder>>,
 }
 
 pub enum fp_materialize_job {}
 
 struct ContextInner {
-    runtime: Mutex<Runtime>,
-    _runtime_dir: PathBuf,
+    socket_path: PathBuf,
+    _mount_path: PathBuf,
 }
 
 #[no_mangle]
@@ -139,11 +140,11 @@ pub unsafe extern "C" fn fp_context_open(
         }
         *out_context = ptr::null_mut();
 
-        let runtime_dir = runtime_dir_from_options(options)?;
+        let runtime_paths = runtime_paths_from_options(options)?;
         let context = fp_context {
             inner: Arc::new(ContextInner {
-                runtime: Mutex::new(Runtime::new()),
-                _runtime_dir: runtime_dir,
+                socket_path: runtime_paths.socket_path,
+                _mount_path: runtime_paths.mount_path,
             }),
         };
 
@@ -182,13 +183,13 @@ pub unsafe extern "C" fn fp_provider_register(
         }
 
         let inner = (*context).inner.clone();
-        let mut runtime = lock_runtime(&inner)?;
-        let id = runtime.register_provider();
-        drop(runtime);
+        let connection = connect_provider(&inner.socket_path).map_err(io_to_ffi)?;
+        let id = ProviderId::from_raw(connection.provider_id()).ok_or(FP_ERR_IO)?;
 
         let provider = fp_provider {
             inner,
             id,
+            connection: Some(connection),
             _read: read,
             _user_data: user_data,
         };
@@ -204,12 +205,9 @@ pub unsafe extern "C" fn fp_provider_unregister(provider: *mut fp_provider) {
         return;
     }
 
-    let provider = Box::from_raw(provider);
-    {
-        let inner = provider.inner.clone();
-        if let Ok(mut runtime) = inner.runtime.lock() {
-            let _ = runtime.unregister_provider(provider.id);
-        };
+    let mut provider = Box::from_raw(provider);
+    if let Some(connection) = provider.connection.take() {
+        let _ = connection.unregister();
     }
 }
 
@@ -229,15 +227,9 @@ pub unsafe extern "C" fn fp_promise_builder_new(
             return Err(FP_ERR_INVALID_ARGUMENT);
         }
 
-        let inner = (*context).inner.clone();
         let provider_id = (*provider).id;
-        if !lock_runtime(&inner)?.has_provider(provider_id) {
-            return Err(FP_ERR_PROVIDER_GONE);
-        }
 
         let builder = fp_promise_builder {
-            inner,
-            provider_id,
             builder: Mutex::new(Some(PromiseBuilder::new(provider_id))),
         };
 
@@ -313,10 +305,6 @@ pub unsafe extern "C" fn fp_promise_commit(
             return Err(FP_ERR_INVALID_ARGUMENT);
         }
 
-        if !lock_runtime(&builder.inner)?.has_provider(builder.provider_id) {
-            return Err(FP_ERR_PROVIDER_GONE);
-        }
-
         Ok(FP_ERR_UNAVAILABLE)
     })
 }
@@ -355,11 +343,19 @@ fn ffi_guard(action: impl FnOnce() -> Result<fp_status_t, fp_status_t>) -> fp_st
     }
 }
 
-unsafe fn runtime_dir_from_options(
+struct RuntimePaths {
+    mount_path: PathBuf,
+    socket_path: PathBuf,
+}
+
+unsafe fn runtime_paths_from_options(
     options: *const fp_context_options_t,
-) -> Result<PathBuf, fp_status_t> {
+) -> Result<RuntimePaths, fp_status_t> {
     if options.is_null() {
-        return default_mount_path().map_err(status_to_ffi);
+        return Ok(RuntimePaths {
+            mount_path: default_mount_path().map_err(status_to_ffi)?,
+            socket_path: default_control_socket_path().map_err(status_to_ffi)?,
+        });
     }
 
     if ((*options).struct_size as usize) < required_context_options_size() {
@@ -371,12 +367,18 @@ unsafe fn runtime_dir_from_options(
 
     let runtime_dir = (*options).runtime_dir;
     if runtime_dir.is_null() {
-        return default_mount_path().map_err(status_to_ffi);
+        return Ok(RuntimePaths {
+            mount_path: default_mount_path().map_err(status_to_ffi)?,
+            socket_path: default_control_socket_path().map_err(status_to_ffi)?,
+        });
     }
 
     let runtime_dir = PathBuf::from(cstr_to_str(runtime_dir)?);
     validate_runtime_dir_path(&runtime_dir).map_err(status_to_ffi)?;
-    Ok(runtime_dir.join("fuse-promise"))
+    Ok(RuntimePaths {
+        mount_path: runtime_dir.join("fuse-promise"),
+        socket_path: runtime_dir.join("fuse-promise.sock"),
+    })
 }
 
 unsafe fn cstr_to_str<'a>(value: *const c_char) -> Result<&'a str, fp_status_t> {
@@ -422,10 +424,6 @@ unsafe fn builder_mut<'a>(
     }
 
     Ok(&*builder)
-}
-
-fn lock_runtime(inner: &ContextInner) -> Result<std::sync::MutexGuard<'_, Runtime>, fp_status_t> {
-    inner.runtime.lock().map_err(|_| FP_ERR_IO)
 }
 
 fn required_context_options_size() -> usize {
@@ -481,5 +479,17 @@ fn status_to_ffi(status: Status) -> fp_status_t {
         Status::Timeout => FP_ERR_TIMEOUT,
         Status::Cancelled => FP_ERR_CANCELLED,
         Status::VersionMismatch => FP_ERR_VERSION_MISMATCH,
+    }
+}
+
+fn io_to_ffi(error: io::Error) -> fp_status_t {
+    match error.kind() {
+        io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => FP_ERR_VERSION_MISMATCH,
+        io::ErrorKind::NotFound
+        | io::ErrorKind::ConnectionRefused
+        | io::ErrorKind::AddrNotAvailable => FP_ERR_UNAVAILABLE,
+        io::ErrorKind::PermissionDenied => FP_ERR_PERMISSION,
+        io::ErrorKind::TimedOut => FP_ERR_TIMEOUT,
+        _ => FP_ERR_IO,
     }
 }
