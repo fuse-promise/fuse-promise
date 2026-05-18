@@ -436,13 +436,20 @@ stable ABI.
 
 ### G5.1 Security Model
 
-- [ ] Document user-session isolation.
-- [ ] Validate `XDG_RUNTIME_DIR` ownership and permissions.
-- [ ] Validate control socket ownership and type.
+- [x] Document user-session isolation.
+- [x] Validate `XDG_RUNTIME_DIR` ownership and permissions.
+- [x] Validate control socket ownership and type.
 - [ ] Validate provider ownership for all daemon mutations.
 - [ ] Validate paths and prevent path traversal.
 - [ ] Validate materialize targets and symlink behavior.
 - [ ] Validate read ranges and message sizes.
+
+Suggested verification:
+
+```sh
+cargo test -p fuse-promise-ipc --locked
+tests/control-socket-security.sh
+```
 
 ### G5.2 Compatibility Matrix
 

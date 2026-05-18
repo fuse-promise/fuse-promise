@@ -152,6 +152,7 @@ Those projects should live outside this repository and use the public API.
 - [Promise Model](docs/promise-model.md)
 - [Public API](docs/public-api.md)
 - [Runtime](docs/runtime.md)
+- [Security](docs/security.md)
 - [Development Style](docs/development-style.md)
 - [Roadmap](docs/roadmap.md)
 - [Progress Goals](docs/progress.md)

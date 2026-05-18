@@ -978,6 +978,7 @@ pub fn validate_provider_read_response_for_request(
 }
 
 fn connect_and_hello(socket_path: &Path) -> io::Result<UnixStream> {
+    validate_control_socket_for_connect(socket_path)?;
     let mut stream = UnixStream::connect(socket_path)?;
     write_frame(
         &mut stream,
@@ -1937,11 +1938,28 @@ where
 
 fn validate_peer(stream: &UnixStream) -> io::Result<()> {
     let peer = rustix::net::sockopt::socket_peercred(stream)?;
-    let current_uid = rustix::process::getuid().as_raw();
-    if peer.uid.as_raw() != current_uid {
+    if peer.uid.as_raw() != current_uid() {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "IPC peer uid does not match current user",
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_control_socket_for_connect(socket_path: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(socket_path)?;
+    if !metadata.file_type().is_socket() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "control socket path is not a socket",
+        ));
+    }
+    if metadata.uid() != current_uid() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "control socket is not owned by the current user",
         ));
     }
 
@@ -1958,12 +1976,22 @@ fn remove_stale_socket(socket_path: &Path) -> io::Result<()> {
             "control socket path exists and is not a socket",
         ));
     }
+    if metadata.uid() != current_uid() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "stale control socket is not owned by the current user",
+        ));
+    }
 
     match fs::remove_file(socket_path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
     }
+}
+
+fn current_uid() -> u32 {
+    rustix::process::getuid().as_raw()
 }
 
 fn error_to_io(error: ErrorBody) -> io::Error {
