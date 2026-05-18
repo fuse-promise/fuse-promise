@@ -483,7 +483,7 @@ Acceptance:
 - [x] Provide build instructions.
 - [x] Provide changelog.
 - [x] Provide developer-preview release notes.
-- [~] Prepare stable release notes.
+- [x] Prepare stable release notes.
 - [x] Document visible filesystem layout.
 - [x] Define first stable soname-major policy.
 - [~] Prepare first stable ABI release.

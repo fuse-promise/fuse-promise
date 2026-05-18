@@ -273,6 +273,9 @@ duration of the callback. Returning any status other than `FP_OK` aborts the
 operation and returns that status to the caller. Returning `FP_ERR_CANCELLED`
 from the progress callback cancels the daemon-side materialize job, cleans up
 targets owned by the job, and returns `FP_ERR_CANCELLED`.
+The first stable ABI release treats `FP_CONFLICT_FAIL`,
+`FP_CONFLICT_OVERWRITE`, `FP_CONFLICT_RENAME`, `fp_materialize_progress_t`, and
+progress-callback cancellation as stable public commitments.
 Materialized files can satisfy later reads through their local materialized
 paths, and an opt-in daemon read-through cache can coalesce reads, prefetch
 sequential ranges, and satisfy fully cached ranges without changing the public
@@ -281,10 +284,10 @@ not fabricate visible FUSE paths from client-local state.
 
 ## String and Buffer Rules
 
-The initial ABI accepts NUL-terminated UTF-8 strings for promise paths,
-provider node identifiers, and runtime directory overrides. This keeps the
-developer preview small. A future byte-path API may be added before the first
-stable ABI if full Linux non-UTF-8 filename support is required.
+The ABI accepts NUL-terminated UTF-8 strings for promise paths, provider node
+identifiers, and runtime directory overrides. A future byte-path API may be
+added as a separate additive entrypoint if full Linux non-UTF-8 filename
+support is required.
 
 Provider read callbacks receive a runtime-owned writable buffer:
 

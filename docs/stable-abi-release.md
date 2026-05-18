@@ -17,6 +17,7 @@ The stable release candidate must freeze:
 - documented `fp_conflict_policy_t` values
 - installed daemon and CLI names
 - default user-session mount layout
+- materialize conflict, progress, and progress-callback cancellation behavior
 
 The stable release must not freeze:
 
@@ -51,17 +52,14 @@ The FUSE gates require libfuse3 development metadata, `/dev/fuse`, and
 
 The first stable ABI release remains blocked until these are resolved:
 
-- Decide whether the current developer-preview materialize conflict policies,
-  progress callback, and progress-callback cancellation are final stable public
-  ABI commitments.
-- Reconcile `CHANGELOG.md` and release notes with the chosen stability
-  statement.
 - Re-run ABI hardening against the exact release build artifact with
-  `BUILD_PROFILE=release tests/abi-hardening.sh`.
+  `BUILD_PROFILE=release SONAME_MAJOR=1 tests/abi-hardening.sh`.
+- Set the final stable release version and date in the changelog and stable
+  release notes.
 - Tag the release only after the installed header, pkg-config metadata, soname,
-  CLI behavior, and smoke gates match this document.
+  CLI behavior, release notes, and smoke gates match this document.
 
-## Current Preview Surface Decisions
+## Stable Candidate Decisions
 
 - The public header exposes only handles and structs used by callable public
   functions; unused future job handles are not part of the developer-preview
@@ -69,14 +67,12 @@ The first stable ABI release remains blocked until these are resolved:
 - The first stable ABI release will use soname-major `1`; developer-preview
   builds continue to default to soname-major `0`.
 - `FP_CONFLICT_FAIL`, `FP_CONFLICT_OVERWRITE`, `FP_CONFLICT_RENAME`,
-  `fp_materialize_progress_t`, and progress-callback cancellation are covered
-  by ABI and smoke tests, but remain developer-preview commitments until the
-  stable release gate explicitly freezes them.
+  `fp_materialize_progress_t`, and progress-callback cancellation are stable
+  candidate commitments for the first stable ABI release.
 
 ## Versioning Rule
 
 Until this checklist is complete, `0.1.0` remains a developer-preview release.
 Its developer-preview notes live in `docs/release-notes-0.1.0.md`.
-After the stable checklist is complete, the stable release notes must state
-which public ABI elements are stable and which values are reserved for future
-expansion.
+The stable release notes draft lives in `docs/release-notes-stable.md`; set the
+final stable release version and date only after the gate passes.
