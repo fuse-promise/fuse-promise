@@ -197,7 +197,7 @@ Acceptance:
 - [x] Fail explicitly if `XDG_RUNTIME_DIR` is missing, not absolute, unsafe, or
   not owned by the current user.
 - [~] Cleanly unmount on daemon exit.
-- [ ] Keep mount lifecycle user-session scoped.
+- [x] Keep mount lifecycle user-session scoped.
 
 Acceptance:
 

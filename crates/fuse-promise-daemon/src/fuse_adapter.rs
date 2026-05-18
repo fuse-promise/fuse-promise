@@ -2,7 +2,9 @@ use fuse_promise_ipc::{IpcMountStatus, IpcState};
 #[cfg(feature = "fuse-mount")]
 use fuse_promise_ipc::{ProviderReadRequest, ProviderReadStatus, MAX_PROVIDER_READ_LEN};
 #[cfg(feature = "fuse-mount")]
-use fuse_promise_runtime::{DirectoryEntry, NodeKind, PromiseNode, ReadPlan, RuntimeEntry, Status};
+use fuse_promise_runtime::{
+    prepare_mount_dir, DirectoryEntry, NodeKind, PromiseNode, ReadPlan, RuntimeEntry, Status,
+};
 #[cfg(feature = "fuse-mount")]
 use std::ffi::OsStr;
 use std::io;
@@ -253,7 +255,7 @@ impl PromiseFilesystem {
 
 #[cfg(feature = "fuse-mount")]
 pub fn start(mount_path: &Path, state: IpcState) -> io::Result<Option<FuseMount>> {
-    std::fs::create_dir_all(mount_path)?;
+    prepare_mount_dir(mount_path).map_err(status_to_io)?;
 
     let mut config = fuser::Config::default();
     config.mount_options = vec![
@@ -420,5 +422,16 @@ fn io_error_to_errno(error: &io::Error) -> fuser::Errno {
         io::ErrorKind::PermissionDenied => fuser::Errno::EACCES,
         io::ErrorKind::TimedOut => fuser::Errno::ETIMEDOUT,
         _ => fuser::Errno::EIO,
+    }
+}
+
+#[cfg(feature = "fuse-mount")]
+fn status_to_io(status: Status) -> io::Error {
+    match status {
+        Status::InvalidArgument => io::Error::new(io::ErrorKind::InvalidInput, status.as_str()),
+        Status::Permission => io::Error::new(io::ErrorKind::PermissionDenied, status.as_str()),
+        Status::AlreadyExists => io::Error::new(io::ErrorKind::AlreadyExists, status.as_str()),
+        Status::NotFound => io::Error::new(io::ErrorKind::NotFound, status.as_str()),
+        _ => io::Error::other(status.as_str()),
     }
 }

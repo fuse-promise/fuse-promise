@@ -400,6 +400,8 @@ The daemon owns mount lifecycle reporting. Default builds keep the FUSE adapter
 disabled so the workspace remains buildable without libfuse3 development
 packages; builds with the `fuse-mount` feature create the user-session
 mountpoint and hold the `fuser` background session handle for daemon lifetime.
+Mountpoint preparation creates a private `0700` directory and rejects unsafe
+existing paths before the FUSE session starts.
 The feature-gated adapter implements read-only FUSE callbacks over the runtime
 inode and directory views and uses the daemon provider route for offset reads.
 Private metadata commit checks shared commit readiness before mutating the

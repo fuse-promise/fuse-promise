@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::os::unix::fs::MetadataExt;
+use std::io;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::path::{Component, Path, PathBuf};
 
 pub const API_VERSION: u32 = 1;
@@ -616,6 +617,52 @@ pub fn validate_runtime_dir_path(runtime_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn prepare_mount_dir(mount_path: &Path) -> Result<()> {
+    if !mount_path.is_absolute() {
+        return Err(Status::InvalidArgument);
+    }
+
+    match fs::symlink_metadata(mount_path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let mut builder = fs::DirBuilder::new();
+            builder.mode(0o700);
+            builder
+                .create(mount_path)
+                .map_err(|error| match error.kind() {
+                    io::ErrorKind::PermissionDenied => Status::Permission,
+                    io::ErrorKind::AlreadyExists => Status::AlreadyExists,
+                    _ => Status::Io,
+                })?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            return Err(Status::Permission);
+        }
+        Err(_) => return Err(Status::Unavailable),
+    }
+
+    validate_mount_dir_path(mount_path)
+}
+
+pub fn validate_mount_dir_path(mount_path: &Path) -> Result<()> {
+    if !mount_path.is_absolute() {
+        return Err(Status::InvalidArgument);
+    }
+
+    let metadata = fs::symlink_metadata(mount_path).map_err(|_| Status::Unavailable)?;
+    if !metadata.is_dir() {
+        return Err(Status::InvalidArgument);
+    }
+    if metadata.uid() != rustix::process::getuid().as_raw() {
+        return Err(Status::Permission);
+    }
+    if metadata.mode() & 0o077 != 0 {
+        return Err(Status::Permission);
+    }
+
+    Ok(())
+}
+
 pub fn normalize_relative_path(input: &str) -> Result<String> {
     if input.as_bytes().contains(&0) {
         return Err(Status::InvalidArgument);
@@ -975,6 +1022,47 @@ mod tests {
         let file = tempfile::NamedTempFile::new().unwrap();
         assert_eq!(
             validate_runtime_dir_path(file.path()),
+            Err(Status::InvalidArgument)
+        );
+    }
+
+    #[test]
+    fn prepares_private_mount_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let mount_path = dir.path().join("fuse-promise");
+
+        assert_eq!(prepare_mount_dir(&mount_path), Ok(()));
+
+        let metadata = fs::symlink_metadata(&mount_path).unwrap();
+        assert!(metadata.is_dir());
+        assert_eq!(metadata.mode() & 0o777, 0o700);
+        assert_eq!(metadata.uid(), rustix::process::getuid().as_raw());
+    }
+
+    #[test]
+    fn rejects_unsafe_mount_directory_paths() {
+        assert_eq!(
+            prepare_mount_dir(Path::new("relative")),
+            Err(Status::InvalidArgument)
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+
+        let unsafe_mount = dir.path().join("unsafe");
+        fs::create_dir(&unsafe_mount).unwrap();
+        fs::set_permissions(&unsafe_mount, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(prepare_mount_dir(&unsafe_mount), Err(Status::Permission));
+
+        let file_mount = dir.path().join("file");
+        fs::write(&file_mount, b"not a directory").unwrap();
+        assert_eq!(prepare_mount_dir(&file_mount), Err(Status::InvalidArgument));
+
+        let symlink_mount = dir.path().join("symlink");
+        std::os::unix::fs::symlink(dir.path(), &symlink_mount).unwrap();
+        assert_eq!(
+            prepare_mount_dir(&symlink_mount),
             Err(Status::InvalidArgument)
         );
     }
