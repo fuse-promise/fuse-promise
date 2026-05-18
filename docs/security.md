@@ -63,11 +63,12 @@ Promise metadata paths are normalized relative paths. Absolute paths, parent
 traversal, NUL-containing paths, duplicate nodes, missing parents, and invalid
 node metadata are rejected before daemon state mutates.
 
-Materialize uses the same provider read path as lazy filesystem reads. The
-current fail-on-conflict policy rejects symlink target directories and existing
-targets, including existing symlink targets, during preflight. Created target
-identity is tracked during cleanup so later failures do not remove unrelated
-files.
+Materialize uses the same provider read path as lazy filesystem reads.
+Materialize target validation rejects symlink target directories and symlink
+entry targets during preflight. The fail-on-conflict policy rejects existing
+targets. The overwrite policy reuses existing directories and replaces existing
+regular files, but rejects symlinks and kind mismatches. Created target identity
+is tracked during cleanup so later failures do not remove unrelated files.
 
 Private IPC frames are size-bounded. Provider read requests require nonzero
 lengths, reject lengths above the configured maximum, and reject offset/length

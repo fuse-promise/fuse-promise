@@ -3,12 +3,11 @@ use fuse_promise_runtime::{
     default_control_socket_path, default_mount_path, normalize_relative_path, CachePolicy,
     NodeAttr, NodeKind, PromiseBuilder, PromiseNode, PromiseState, Runtime, Status, API_VERSION,
 };
+use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{
-    DirBuilderExt, FileExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt,
-};
+use std::os::unix::fs::{DirBuilderExt, FileExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixListener;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -22,6 +21,7 @@ pub const IPC_PROTOCOL_VERSION: u32 = 1;
 pub const MAX_FRAME_LEN: u32 = 1024 * 1024;
 pub const MAX_PROVIDER_READ_LEN: u32 = 256 * 1024;
 const PROVIDER_READ_TIMEOUT: Duration = Duration::from_secs(30);
+static MATERIALIZE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DaemonStatus {
@@ -1369,6 +1369,7 @@ fn handle_materialize(
 struct MaterializePlan {
     promise_id: String,
     target_path: PathBuf,
+    conflict_policy: MaterializeConflictPolicy,
     entries: Vec<MaterializeEntryPlan>,
 }
 
@@ -1399,6 +1400,7 @@ struct CreatedTarget {
     path: PathBuf,
     identity: FileIdentity,
     kind: MaterializeTargetKind,
+    remove_on_cleanup: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1418,13 +1420,21 @@ struct MaterializeOperationError {
 #[derive(Debug)]
 struct MaterializeFileOutcome {
     bytes_written: u64,
-    target_identity: FileIdentity,
+    target: CreatedTarget,
+}
+
+struct MaterializeFileTarget {
+    file: fs::File,
+    write_target: CreatedTarget,
+    final_path: PathBuf,
+    final_remove_on_cleanup: bool,
+    replace_on_success: bool,
 }
 
 #[derive(Debug)]
 struct MaterializeWriteError {
     status: Status,
-    created_target: Option<FileIdentity>,
+    target: Option<CreatedTarget>,
     bytes_written: u64,
 }
 
@@ -1441,19 +1451,15 @@ impl MaterializeWriteError {
     fn without_created_target(status: Status) -> Self {
         Self {
             status,
-            created_target: None,
+            target: None,
             bytes_written: 0,
         }
     }
 
-    fn with_created_target(
-        status: Status,
-        created_target: FileIdentity,
-        bytes_written: u64,
-    ) -> Self {
+    fn with_target(status: Status, target: CreatedTarget, bytes_written: u64) -> Self {
         Self {
             status,
-            created_target: Some(created_target),
+            target: Some(target),
             bytes_written,
         }
     }
@@ -1517,9 +1523,11 @@ fn materialize_node_in_state(
         .iter()
         .filter(|entry| entry.kind == NodeKind::Directory)
     {
-        match create_materialized_directory(entry) {
+        match create_materialized_directory(entry, plan.conflict_policy) {
             Ok(created) => {
-                progress.directories_created += 1;
+                if created.remove_on_cleanup {
+                    progress.directories_created += 1;
+                }
                 created_targets.push(created);
             }
             Err(status) => {
@@ -1534,24 +1542,16 @@ fn materialize_node_in_state(
         .iter()
         .filter(|entry| entry.kind == NodeKind::File)
     {
-        match write_materialized_file(state, &plan.promise_id, entry) {
+        match write_materialized_file(state, &plan.promise_id, entry, plan.conflict_policy) {
             Ok(outcome) => {
                 progress.bytes_written += outcome.bytes_written;
                 progress.files_written += 1;
-                created_targets.push(CreatedTarget {
-                    path: entry.target_path.clone(),
-                    identity: outcome.target_identity,
-                    kind: MaterializeTargetKind::File,
-                });
+                created_targets.push(outcome.target);
             }
             Err(error) => {
                 progress.bytes_written += error.bytes_written;
-                if let Some(identity) = error.created_target {
-                    created_targets.push(CreatedTarget {
-                        path: entry.target_path.clone(),
-                        identity,
-                        kind: MaterializeTargetKind::File,
-                    });
+                if let Some(target) = error.target {
+                    created_targets.push(target);
                 }
                 cleanup_created_targets(&created_targets);
                 return Err(MaterializeOperationError::with_progress(
@@ -1612,7 +1612,7 @@ fn plan_materialize(
     state: &IpcState,
     request: &MaterializeRequest,
 ) -> std::result::Result<MaterializePlan, Status> {
-    if request.conflict_policy != MaterializeConflictPolicy::Fail {
+    if request.conflict_policy == MaterializeConflictPolicy::Rename {
         return Err(Status::Unavailable);
     }
     validate_target_dir(&request.target_dir)?;
@@ -1648,11 +1648,12 @@ fn plan_materialize(
             mtime_nsec: node.attr.mtime_nsec,
         });
     }
-    preflight_materialize_targets(&entries)?;
+    preflight_materialize_targets(&entries, request.conflict_policy)?;
 
     Ok(MaterializePlan {
         promise_id,
         target_path,
+        conflict_policy: request.conflict_policy,
         entries,
     })
 }
@@ -1689,16 +1690,38 @@ fn subtree_target_suffix(
 
 fn preflight_materialize_targets(
     entries: &[MaterializeEntryPlan],
+    conflict_policy: MaterializeConflictPolicy,
 ) -> std::result::Result<(), Status> {
     for entry in entries {
         match fs::symlink_metadata(&entry.target_path) {
-            Ok(_) => return Err(Status::AlreadyExists),
+            Ok(metadata) => {
+                validate_existing_materialize_target(entry, &metadata, conflict_policy)?
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(io_error_to_status(&error)),
         }
     }
 
     Ok(())
+}
+
+fn validate_existing_materialize_target(
+    entry: &MaterializeEntryPlan,
+    metadata: &fs::Metadata,
+    conflict_policy: MaterializeConflictPolicy,
+) -> std::result::Result<(), Status> {
+    if metadata.file_type().is_symlink() {
+        return Err(Status::InvalidArgument);
+    }
+    match conflict_policy {
+        MaterializeConflictPolicy::Fail => Err(Status::AlreadyExists),
+        MaterializeConflictPolicy::Overwrite => match entry.kind {
+            NodeKind::Directory if metadata.is_dir() => Ok(()),
+            NodeKind::File if metadata.is_file() => Ok(()),
+            _ => Err(Status::AlreadyExists),
+        },
+        MaterializeConflictPolicy::Rename => Err(Status::Unavailable),
+    }
 }
 
 fn validate_target_dir(target_dir: &Path) -> std::result::Result<(), Status> {
@@ -1715,7 +1738,22 @@ fn validate_target_dir(target_dir: &Path) -> std::result::Result<(), Status> {
 
 fn create_materialized_directory(
     entry: &MaterializeEntryPlan,
+    conflict_policy: MaterializeConflictPolicy,
 ) -> std::result::Result<CreatedTarget, Status> {
+    match fs::symlink_metadata(&entry.target_path) {
+        Ok(metadata) => {
+            validate_existing_materialize_target(entry, &metadata, conflict_policy)?;
+            return Ok(CreatedTarget {
+                path: entry.target_path.clone(),
+                identity: FileIdentity::from_metadata(&metadata),
+                kind: MaterializeTargetKind::Directory,
+                remove_on_cleanup: false,
+            });
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(io_error_to_status(&error)),
+    }
+
     let mut builder = fs::DirBuilder::new();
     builder.mode(0o700);
     builder
@@ -1729,6 +1767,7 @@ fn create_materialized_directory(
         path: entry.target_path.clone(),
         identity,
         kind: MaterializeTargetKind::Directory,
+        remove_on_cleanup: true,
     })
 }
 
@@ -1751,14 +1790,16 @@ fn apply_directory_metadata(
 }
 
 fn cleanup_created_targets(created_targets: &[CreatedTarget]) {
-    for target in created_targets
-        .iter()
-        .filter(|target| target.kind == MaterializeTargetKind::Directory)
-    {
+    for target in created_targets.iter().filter(|target| {
+        target.kind == MaterializeTargetKind::Directory && target.remove_on_cleanup
+    }) {
         restore_created_directory_permissions(target);
     }
 
     for target in created_targets.iter().rev() {
+        if !target.remove_on_cleanup {
+            continue;
+        }
         let Ok(metadata) = fs::symlink_metadata(&target.path) else {
             continue;
         };
@@ -1790,45 +1831,42 @@ fn write_materialized_file(
     state: &IpcState,
     promise_id: &str,
     entry: &MaterializeEntryPlan,
+    conflict_policy: MaterializeConflictPolicy,
 ) -> std::result::Result<MaterializeFileOutcome, MaterializeWriteError> {
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&entry.target_path)
-        .map_err(|error| {
-            MaterializeWriteError::without_created_target(io_error_to_status(&error))
-        })?;
-    let target_identity = FileIdentity::from_metadata(&file.metadata().map_err(|error| {
-        MaterializeWriteError::without_created_target(io_error_to_status(&error))
-    })?);
+    let MaterializeFileTarget {
+        mut file,
+        write_target,
+        final_path,
+        final_remove_on_cleanup,
+        replace_on_success,
+    } = open_materialized_file(entry, conflict_policy)?;
 
     let mut offset = 0;
     while offset < entry.size {
         let length = (entry.size - offset).min(u64::from(MAX_PROVIDER_READ_LEN)) as u32;
         let bytes =
             read_materialize_chunk(state, promise_id, entry, offset, length).map_err(|status| {
-                MaterializeWriteError::with_created_target(status, target_identity, offset)
+                MaterializeWriteError::with_target(status, write_target.clone(), offset)
             })?;
         if bytes.is_empty() {
-            return Err(MaterializeWriteError::with_created_target(
+            return Err(MaterializeWriteError::with_target(
                 Status::Io,
-                target_identity,
+                write_target,
                 offset,
             ));
         }
 
         file.write_all(&bytes).map_err(|error| {
-            MaterializeWriteError::with_created_target(
+            MaterializeWriteError::with_target(
                 io_error_to_status(&error),
-                target_identity,
+                write_target.clone(),
                 offset,
             )
         })?;
         offset = offset.checked_add(bytes.len() as u64).ok_or_else(|| {
-            MaterializeWriteError::with_created_target(
+            MaterializeWriteError::with_target(
                 Status::InvalidArgument,
-                target_identity,
+                write_target.clone(),
                 offset,
             )
         })?;
@@ -1836,19 +1874,170 @@ fn write_materialized_file(
 
     file.set_permissions(fs::Permissions::from_mode(entry.mode & 0o7777))
         .map_err(|error| {
-            MaterializeWriteError::with_created_target(
+            MaterializeWriteError::with_target(
                 io_error_to_status(&error),
-                target_identity,
+                write_target.clone(),
                 offset,
             )
         })?;
     apply_mtime(&file, entry.mtime_nsec).map_err(|status| {
-        MaterializeWriteError::with_created_target(status, target_identity, offset)
+        MaterializeWriteError::with_target(status, write_target.clone(), offset)
     })?;
     drop(file);
+    let target = finalize_materialized_file(
+        write_target,
+        final_path,
+        final_remove_on_cleanup,
+        replace_on_success,
+        offset,
+    )?;
     Ok(MaterializeFileOutcome {
         bytes_written: offset,
-        target_identity,
+        target,
+    })
+}
+
+fn open_materialized_file(
+    entry: &MaterializeEntryPlan,
+    conflict_policy: MaterializeConflictPolicy,
+) -> std::result::Result<MaterializeFileTarget, MaterializeWriteError> {
+    let target_exists = match fs::symlink_metadata(&entry.target_path) {
+        Ok(metadata) => {
+            validate_existing_materialize_target(entry, &metadata, conflict_policy)
+                .map_err(MaterializeWriteError::without_created_target)?;
+            true
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return Err(MaterializeWriteError::without_created_target(
+                io_error_to_status(&error),
+            ))
+        }
+    };
+
+    match conflict_policy {
+        MaterializeConflictPolicy::Fail => open_final_materialized_file(entry, true),
+        MaterializeConflictPolicy::Overwrite if target_exists => {
+            open_replacement_materialized_file(entry)
+        }
+        MaterializeConflictPolicy::Overwrite => open_final_materialized_file(entry, true),
+        MaterializeConflictPolicy::Rename => Err(MaterializeWriteError::without_created_target(
+            Status::Unavailable,
+        )),
+    }
+}
+
+fn open_final_materialized_file(
+    entry: &MaterializeEntryPlan,
+    remove_on_cleanup: bool,
+) -> std::result::Result<MaterializeFileTarget, MaterializeWriteError> {
+    let flags = rustix::fs::OFlags::WRONLY
+        | rustix::fs::OFlags::CREATE
+        | rustix::fs::OFlags::EXCL
+        | rustix::fs::OFlags::NOFOLLOW;
+    let (file, identity) = open_materialize_output(&entry.target_path, flags)?;
+
+    Ok(MaterializeFileTarget {
+        file,
+        write_target: CreatedTarget {
+            path: entry.target_path.clone(),
+            identity,
+            kind: MaterializeTargetKind::File,
+            remove_on_cleanup,
+        },
+        final_path: entry.target_path.clone(),
+        final_remove_on_cleanup: remove_on_cleanup,
+        replace_on_success: false,
+    })
+}
+
+fn open_replacement_materialized_file(
+    entry: &MaterializeEntryPlan,
+) -> std::result::Result<MaterializeFileTarget, MaterializeWriteError> {
+    for _ in 0..16 {
+        let attempt = MATERIALIZE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temp_path = materialize_temp_path(&entry.target_path, attempt)
+            .map_err(MaterializeWriteError::without_created_target)?;
+        let flags = rustix::fs::OFlags::WRONLY
+            | rustix::fs::OFlags::CREATE
+            | rustix::fs::OFlags::EXCL
+            | rustix::fs::OFlags::NOFOLLOW;
+        match open_materialize_output(&temp_path, flags) {
+            Ok((file, identity)) => {
+                return Ok(MaterializeFileTarget {
+                    file,
+                    write_target: CreatedTarget {
+                        path: temp_path,
+                        identity,
+                        kind: MaterializeTargetKind::File,
+                        remove_on_cleanup: true,
+                    },
+                    final_path: entry.target_path.clone(),
+                    final_remove_on_cleanup: false,
+                    replace_on_success: true,
+                });
+            }
+            Err(error) if error.status == Status::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(MaterializeWriteError::without_created_target(
+        Status::AlreadyExists,
+    ))
+}
+
+fn open_materialize_output(
+    path: &Path,
+    flags: rustix::fs::OFlags,
+) -> std::result::Result<(fs::File, FileIdentity), MaterializeWriteError> {
+    let file = rustix::fs::open(path, flags, rustix::fs::Mode::from_raw_mode(0o600))
+        .map(fs::File::from)
+        .map_err(|error| {
+            let io_error: io::Error = error.into();
+            MaterializeWriteError::without_created_target(io_error_to_status(&io_error))
+        })?;
+    let identity = FileIdentity::from_metadata(&file.metadata().map_err(|error| {
+        MaterializeWriteError::without_created_target(io_error_to_status(&error))
+    })?);
+
+    Ok((file, identity))
+}
+
+fn materialize_temp_path(target_path: &Path, attempt: u64) -> std::result::Result<PathBuf, Status> {
+    let parent = target_path.parent().ok_or(Status::InvalidArgument)?;
+    let file_name = target_path.file_name().ok_or(Status::InvalidArgument)?;
+    let mut temp_name = OsString::from(".");
+    temp_name.push(file_name);
+    temp_name.push(format!(
+        ".fuse-promise-tmp-{}-{attempt}",
+        std::process::id()
+    ));
+    Ok(parent.join(temp_name))
+}
+
+fn finalize_materialized_file(
+    write_target: CreatedTarget,
+    final_path: PathBuf,
+    final_remove_on_cleanup: bool,
+    replace_on_success: bool,
+    bytes_written: u64,
+) -> std::result::Result<CreatedTarget, MaterializeWriteError> {
+    if replace_on_success {
+        fs::rename(&write_target.path, &final_path).map_err(|error| {
+            MaterializeWriteError::with_target(
+                io_error_to_status(&error),
+                write_target.clone(),
+                bytes_written,
+            )
+        })?;
+    }
+
+    Ok(CreatedTarget {
+        path: final_path,
+        identity: write_target.identity,
+        kind: MaterializeTargetKind::File,
+        remove_on_cleanup: final_remove_on_cleanup,
     })
 }
 
@@ -1859,35 +2048,54 @@ fn read_materialize_chunk(
     offset: u64,
     length: u32,
 ) -> std::result::Result<Vec<u8>, Status> {
+    let provider_read_plan = {
+        let runtime = state.runtime.lock().map_err(|_| Status::Io)?;
+        match runtime.plan_provider_read(promise_id, &entry.relative_path, offset, length) {
+            Ok(plan) => Some(plan),
+            Err(Status::ProviderGone) => None,
+            Err(status) => return Err(status),
+        }
+    };
+    if let Some(plan) = provider_read_plan {
+        return read_materialize_provider_chunk(state, plan);
+    }
+
     let read_plan = {
         let runtime = state.runtime.lock().map_err(|_| Status::Io)?;
         runtime.plan_read(promise_id, &entry.relative_path, offset, length)?
     };
     match read_plan {
         fuse_promise_runtime::ReadPlan::Request(plan) => {
-            let request = ProviderReadRequest {
-                request_id: state.next_provider_read_request_id(),
-                provider_id: plan.provider_id.raw(),
-                promise_id: plan.promise_id,
-                relative_path: plan.relative_path,
-                provider_node_id: plan.provider_node_id,
-                offset: plan.offset,
-                length: plan.length,
-            };
-            let response = state
-                .route_provider_read(request)
-                .map_err(|error| io_error_to_status(&error))?;
-            if response.status == ProviderReadStatus::Ok {
-                Ok(response.bytes)
-            } else {
-                Err(provider_read_status_to_status(response.status))
-            }
+            read_materialize_provider_chunk(state, plan)
         }
         fuse_promise_runtime::ReadPlan::Materialized(plan) => {
             read_local_materialized_chunk(&plan.path, plan.offset, plan.length)
         }
         fuse_promise_runtime::ReadPlan::Cached(plan) => Ok(plan.bytes),
         fuse_promise_runtime::ReadPlan::Eof => Err(Status::Io),
+    }
+}
+
+fn read_materialize_provider_chunk(
+    state: &IpcState,
+    plan: fuse_promise_runtime::ProviderReadPlan,
+) -> std::result::Result<Vec<u8>, Status> {
+    let request = ProviderReadRequest {
+        request_id: state.next_provider_read_request_id(),
+        provider_id: plan.provider_id.raw(),
+        promise_id: plan.promise_id,
+        relative_path: plan.relative_path,
+        provider_node_id: plan.provider_node_id,
+        offset: plan.offset,
+        length: plan.length,
+    };
+    let response = state
+        .route_provider_read(request)
+        .map_err(|error| io_error_to_status(&error))?;
+    if response.status == ProviderReadStatus::Ok {
+        Ok(response.bytes)
+    } else {
+        Err(provider_read_status_to_status(response.status))
     }
 }
 
@@ -3381,10 +3589,12 @@ mod tests {
             mtime_nsec: 0,
         };
 
-        let error = write_materialized_file(&state, "promise-1", &entry).unwrap_err();
+        let error =
+            write_materialized_file(&state, "promise-1", &entry, MaterializeConflictPolicy::Fail)
+                .unwrap_err();
 
         assert_eq!(error.status, Status::AlreadyExists);
-        assert_eq!(error.created_target, None);
+        assert!(error.target.is_none());
         assert_eq!(fs::read(&target_path).unwrap(), b"existing");
     }
 
@@ -3404,6 +3614,7 @@ mod tests {
             path: target_path.clone(),
             identity: original_identity,
             kind: MaterializeTargetKind::File,
+            remove_on_cleanup: true,
         }]);
         assert_eq!(fs::read(&target_path).unwrap(), b"external");
         assert_eq!(fs::read(&original_path).unwrap(), b"ours");
@@ -3412,6 +3623,7 @@ mod tests {
             path: original_path.clone(),
             identity: original_identity,
             kind: MaterializeTargetKind::File,
+            remove_on_cleanup: true,
         }]);
         assert!(!original_path.exists());
     }
@@ -3430,16 +3642,19 @@ mod tests {
             path: root_path.clone(),
             identity: FileIdentity::from_metadata(&fs::symlink_metadata(&root_path).unwrap()),
             kind: MaterializeTargetKind::Directory,
+            remove_on_cleanup: true,
         };
         let child = CreatedTarget {
             path: child_path.clone(),
             identity: FileIdentity::from_metadata(&fs::symlink_metadata(&child_path).unwrap()),
             kind: MaterializeTargetKind::Directory,
+            remove_on_cleanup: true,
         };
         let file = CreatedTarget {
             path: file_path.clone(),
             identity: FileIdentity::from_metadata(&fs::symlink_metadata(&file_path).unwrap()),
             kind: MaterializeTargetKind::File,
+            remove_on_cleanup: true,
         };
         fs::set_permissions(&root_path, fs::Permissions::from_mode(0o555)).unwrap();
         fs::set_permissions(&child_path, fs::Permissions::from_mode(0o555)).unwrap();

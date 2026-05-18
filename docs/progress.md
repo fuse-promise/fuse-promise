@@ -329,7 +329,7 @@ diff -r <expected-dir> <target-dir>/<dir>
 ### G2.3 Conflict, Progress, and Cancellation
 
 - [x] Implement `FP_CONFLICT_FAIL`.
-- [ ] Implement `FP_CONFLICT_OVERWRITE`.
+- [x] Implement `FP_CONFLICT_OVERWRITE`.
 - [ ] Implement `FP_CONFLICT_RENAME`.
 - [ ] Add progress reporting.
 - [ ] Add cancellation.

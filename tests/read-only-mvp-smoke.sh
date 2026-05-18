@@ -198,6 +198,15 @@ if XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" \
 fi
 grep -q "already exists" "$work_dir/materialize-conflict.err" \
     || fail "materialize conflict did not report already exists"
+printf 'stale\n' > "$materialize_dir/readme.txt"
+XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" \
+    materialize --overwrite "$file_path" "$materialize_dir" > "$work_dir/materialize-overwrite.out"
+grep -q "^target_path=$materialize_dir/readme.txt$" "$work_dir/materialize-overwrite.out" \
+    || fail "overwrite materialize did not report expected target path"
+grep -q '^bytes_written=24$' "$work_dir/materialize-overwrite.out" \
+    || fail "overwrite materialize did not report expected byte count"
+cmp "$expected_file" "$materialize_dir/readme.txt" >/dev/null \
+    || fail "overwrite materialized file did not match provider data"
 
 XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" \
     materialize "$docs_path" "$materialize_tree_dir" > "$work_dir/materialize-tree.out"
@@ -214,6 +223,19 @@ diff -r "$expected_tree/docs" "$materialize_tree_dir/docs" >/dev/null \
 directory_stat=$(stat -c '%a %Y' "$materialize_tree_dir/docs" "$materialize_tree_dir/docs/guides" "$materialize_tree_dir/docs/empty")
 [ "$directory_stat" = "$(printf '755 0\n755 0\n755 0')" ] \
     || fail "directory materialize metadata mismatch: $directory_stat"
+printf 'stale\n' > "$materialize_tree_dir/docs/guides/setup.txt"
+XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" \
+    materialize --overwrite "$docs_path" "$materialize_tree_dir" > "$work_dir/materialize-tree-overwrite.out"
+grep -q "^target_path=$materialize_tree_dir/docs$" "$work_dir/materialize-tree-overwrite.out" \
+    || fail "directory overwrite did not report expected target path"
+grep -q '^bytes_written=36$' "$work_dir/materialize-tree-overwrite.out" \
+    || fail "directory overwrite did not report expected byte count"
+grep -q '^files_written=2$' "$work_dir/materialize-tree-overwrite.out" \
+    || fail "directory overwrite did not report expected file count"
+grep -q '^directories_created=0$' "$work_dir/materialize-tree-overwrite.out" \
+    || fail "directory overwrite unexpectedly created directories"
+diff -r "$expected_tree/docs" "$materialize_tree_dir/docs" >/dev/null \
+    || fail "directory overwrite did not match expected tree"
 
 kill "$provider_pid"
 wait "$provider_pid" || true

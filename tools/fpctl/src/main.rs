@@ -28,10 +28,20 @@ fn main() -> ExitCode {
             list()
         }
         Some("materialize") => {
-            let Some(promise_path) = args.next() else {
+            let Some(first) = args.next() else {
                 eprintln!("fpctl: materialize requires a promise path");
                 print_help();
                 return ExitCode::from(2);
+            };
+            let (conflict_policy, promise_path) = if first == "--overwrite" {
+                let Some(promise_path) = args.next() else {
+                    eprintln!("fpctl: materialize --overwrite requires a promise path");
+                    print_help();
+                    return ExitCode::from(2);
+                };
+                (MaterializeConflictPolicy::Overwrite, promise_path)
+            } else {
+                (MaterializeConflictPolicy::Fail, first)
             };
             let Some(target_dir) = args.next() else {
                 eprintln!("fpctl: materialize requires a target directory");
@@ -43,7 +53,7 @@ fn main() -> ExitCode {
                 print_help();
                 return ExitCode::from(2);
             }
-            materialize(&promise_path, &target_dir)
+            materialize(&promise_path, &target_dir, conflict_policy)
         }
         Some("-h") | Some("--help") | Some("help") => {
             print_help();
@@ -57,7 +67,11 @@ fn main() -> ExitCode {
     }
 }
 
-fn materialize(promise_path: &str, target_dir: &str) -> ExitCode {
+fn materialize(
+    promise_path: &str,
+    target_dir: &str,
+    conflict_policy: MaterializeConflictPolicy,
+) -> ExitCode {
     let socket_path = match default_control_socket_path() {
         Ok(path) => path,
         Err(status) => {
@@ -85,7 +99,7 @@ fn materialize(promise_path: &str, target_dir: &str) -> ExitCode {
         MaterializeRequest {
             source_path,
             target_dir,
-            conflict_policy: MaterializeConflictPolicy::Fail,
+            conflict_policy,
         },
     ) {
         Ok(response) => {
@@ -191,5 +205,5 @@ fn print_help() {
     println!("commands:");
     println!("  status    Query the user-session daemon status");
     println!("  list      List daemon-owned promises and nodes");
-    println!("  materialize <promise-path> <target-dir>");
+    println!("  materialize [--overwrite] <promise-path> <target-dir>");
 }

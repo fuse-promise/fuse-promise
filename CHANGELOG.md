@@ -10,7 +10,7 @@ Initial developer release scope:
 - User-session FUSE mount under `$XDG_RUNTIME_DIR/fuse-promise/`.
 - Provider registration, metadata commit, lazy read routing, and provider-gone
   read errors.
-- File and directory materialize with fail-on-conflict behavior.
+- File and directory materialize with fail-on-conflict and overwrite behavior.
 - Explicit default `no-cache` policy and opt-in read-through cache with range
   tracking, sequential prefetch, and read coalescing.
 - Materialized-file read passthrough after provider disconnect.
@@ -20,6 +20,6 @@ Initial developer release scope:
 Not included in this release:
 
 - Stable ABI guarantee.
-- Overwrite or rename materialize conflict policies.
+- Rename materialize conflict policy.
 - Progress reporting or cancellation.
 - Network, cloud-provider, P2P, clipboard, or desktop integration logic.

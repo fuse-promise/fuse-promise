@@ -996,6 +996,33 @@ impl Runtime {
             }
         }
 
+        self.plan_provider_read(promise_id, &node.relative_path, offset, length)
+            .map(ReadPlan::Request)
+    }
+
+    pub fn plan_provider_read(
+        &self,
+        promise_id: &str,
+        relative_path: &str,
+        offset: u64,
+        length: u32,
+    ) -> Result<ProviderReadPlan> {
+        let tree = self.promise(promise_id).ok_or(Status::NotFound)?;
+        let node = tree.get(relative_path).ok_or(Status::NotFound)?;
+        if node.kind != NodeKind::File {
+            return Err(Status::InvalidArgument);
+        }
+        if length == 0 || offset >= node.attr.size {
+            return Err(Status::InvalidArgument);
+        }
+
+        let remaining = node.attr.size - offset;
+        let length = u64::from(length).min(remaining);
+        let length = u32::try_from(length).map_err(|_| Status::InvalidArgument)?;
+        if offset.checked_add(u64::from(length)).is_none() {
+            return Err(Status::InvalidArgument);
+        }
+
         if tree.state != PromiseState::Available {
             return Err(Status::ProviderGone);
         }
@@ -1003,14 +1030,14 @@ impl Runtime {
             return Err(Status::ProviderGone);
         }
 
-        Ok(ReadPlan::Request(ProviderReadPlan {
+        Ok(ProviderReadPlan {
             provider_id: tree.provider_id,
             promise_id: tree.promise_id.clone(),
             relative_path: node.relative_path.clone(),
             provider_node_id: node.provider_node_id.clone(),
             offset,
             length,
-        }))
+        })
     }
 
     pub fn mark_node_materialized(

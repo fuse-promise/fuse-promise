@@ -32,9 +32,10 @@ cover `fpctl status`, `fpctl list`, `find`, `ls`, `stat`, offset `dd`, `cat`,
 optional read-through cache mode, large metadata-only tree traversal, and
 bounded random reads from a large promised file.
 File and directory subtree materialize are implemented for the
-fail-on-conflict policy; overwrite/rename policies, progress, and cancellation
-remain under development. The runtime exposes `cache_policy=no-cache` by
-default through `fpctl status`; an opt-in daemon `--cache=read-through` mode
+fail-on-conflict and overwrite policies; rename policy, progress, and
+cancellation remain under development. The runtime exposes
+`cache_policy=no-cache` by default through `fpctl status`; an opt-in daemon
+`--cache=read-through` mode
 coalesces reads into cache chunks, stores complete read ranges in memory, and
 prefetches the next sequential range. Reads for completely materialized files
 can use the local materialized path after the provider disconnects. Private
@@ -54,8 +55,8 @@ The first implementation target is a read-only Promise filesystem MVP:
 - Support `stat`, `readdir`, `open`, and offset-based `read`.
 - Route reads to provider callbacks.
 
-Overwrite/rename conflict policies, progress reporting, cancellation, and
-distribution packaging remain later phases.
+Rename conflict policy, progress reporting, cancellation, and final stable ABI
+release preparation remain later phases.
 
 ## Why
 
