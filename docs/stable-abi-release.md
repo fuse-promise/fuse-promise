@@ -34,8 +34,8 @@ Run these before declaring the ABI stable:
 cargo fmt --check --all
 cargo check --workspace --locked
 cargo test --workspace --locked
-tests/abi-hardening.sh
-tests/install-metadata.sh
+BUILD_PROFILE=release tests/abi-hardening.sh
+BUILD_PROFILE=release tests/install-metadata.sh
 tests/read-only-mvp-smoke.sh
 tests/read-through-cache-smoke.sh
 tests/performance-stress.sh
@@ -57,7 +57,8 @@ The first stable ABI release remains blocked until these are resolved:
 - Choose the stable soname major before tagging the first stable ABI release.
 - Reconcile `CHANGELOG.md` and release notes with the chosen stability
   statement.
-- Re-run ABI hardening against the exact release build artifact.
+- Re-run ABI hardening against the exact release build artifact with
+  `BUILD_PROFILE=release tests/abi-hardening.sh`.
 - Tag the release only after the installed header, pkg-config metadata, soname,
   CLI behavior, and smoke gates match this document.
 

@@ -13,6 +13,22 @@ pkgconfigdir=${PKGCONFIGDIR:-"$libdir/pkgconfig"}
 systemd_user_dir=${SYSTEMD_USER_DIR:-"$prefix/lib/systemd/user"}
 daemon_features=${DAEMON_FEATURES:-}
 soname_major=${SONAME_MAJOR:-0}
+build_profile=${BUILD_PROFILE:-debug}
+
+case "$build_profile" in
+    debug)
+        cargo_profile_args=()
+        artifact_dir=target/debug
+        ;;
+    release)
+        cargo_profile_args=(--release)
+        artifact_dir=target/release
+        ;;
+    *)
+        echo "install-dev: BUILD_PROFILE must be debug or release" >&2
+        exit 1
+        ;;
+esac
 
 install_path() {
     printf '%s%s' "$destdir" "$1"
@@ -50,27 +66,28 @@ version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
     exit 1
 }
 
-cargo build -p fuse-promise-ffi --locked
-cargo build -p fpctl --locked
+cargo build -p fuse-promise-ffi --locked "${cargo_profile_args[@]}"
+cargo build -p fpctl --locked "${cargo_profile_args[@]}"
 if [ -n "$daemon_features" ]; then
-    cargo build -p fuse-promise-daemon --features "$daemon_features" --locked
+    cargo build -p fuse-promise-daemon --features "$daemon_features" --locked \
+        "${cargo_profile_args[@]}"
 else
-    cargo build -p fuse-promise-daemon --locked
+    cargo build -p fuse-promise-daemon --locked "${cargo_profile_args[@]}"
 fi
 
 install_file 0644 include/fuse-promise/fuse-promise.h \
     "$includedir/fuse-promise/fuse-promise.h"
 
 versioned_lib="$libdir/libfusepromise.so.$version"
-install_file 0755 target/debug/libfusepromise.so "$versioned_lib"
+install_file 0755 "$artifact_dir/libfusepromise.so" "$versioned_lib"
 ln -sfn "libfusepromise.so.$version" "$(install_path "$libdir/libfusepromise.so.$soname_major")"
 ln -sfn "libfusepromise.so.$soname_major" "$(install_path "$libdir/libfusepromise.so")"
 
 install_text_template 0644 pkgconfig/fuse-promise.pc.in \
     "$pkgconfigdir/fuse-promise.pc"
 
-install_file 0755 target/debug/fuse-promised "$bindir/fuse-promised"
-install_file 0755 target/debug/fpctl "$bindir/fpctl"
+install_file 0755 "$artifact_dir/fuse-promised" "$bindir/fuse-promised"
+install_file 0755 "$artifact_dir/fpctl" "$bindir/fpctl"
 install_text_template 0644 systemd/user/fuse-promised.service.in \
     "$systemd_user_dir/fuse-promised.service"
 

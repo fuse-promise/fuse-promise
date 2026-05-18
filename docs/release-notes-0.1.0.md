@@ -53,8 +53,8 @@ The developer-preview release candidate should pass:
 cargo fmt --check --all
 cargo check --workspace --locked
 cargo test --workspace --locked
-tests/abi-hardening.sh
-tests/install-metadata.sh
+BUILD_PROFILE=release tests/abi-hardening.sh
+BUILD_PROFILE=release tests/install-metadata.sh
 tests/read-only-mvp-smoke.sh
 tests/read-through-cache-smoke.sh
 tests/performance-stress.sh

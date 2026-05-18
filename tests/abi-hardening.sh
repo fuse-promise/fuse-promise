@@ -8,6 +8,22 @@ cxx_bin=${CXX:-c++}
 pkg_config_bin=${PKG_CONFIG:-pkg-config}
 nm_bin=${NM:-nm}
 readelf_bin=${READELF:-readelf}
+build_profile=${BUILD_PROFILE:-debug}
+
+case "$build_profile" in
+    debug)
+        cargo_profile_args=()
+        artifact_dir=target/debug
+        ;;
+    release)
+        cargo_profile_args=(--release)
+        artifact_dir=target/release
+        ;;
+    *)
+        echo "error: BUILD_PROFILE must be debug or release" >&2
+        exit 1
+        ;;
+esac
 
 fail() {
     echo "error: $*" >&2
@@ -31,10 +47,10 @@ prefix="$work_dir/prefix"
 mkdir -p "$prefix/include/fuse-promise" "$prefix/lib/pkgconfig"
 
 cd "$repo_dir"
-cargo build -p fuse-promise-ffi --locked
+cargo build -p fuse-promise-ffi --locked "${cargo_profile_args[@]}"
 
 cp include/fuse-promise/fuse-promise.h "$prefix/include/fuse-promise/fuse-promise.h"
-cp target/debug/libfusepromise.so "$prefix/lib/libfusepromise.so.0"
+cp "$artifact_dir/libfusepromise.so" "$prefix/lib/libfusepromise.so.0"
 ln -sfn libfusepromise.so.0 "$prefix/lib/libfusepromise.so"
 "$readelf_bin" -d "$prefix/lib/libfusepromise.so.0" \
     | grep -q 'SONAME.*libfusepromise.so.0' \
@@ -56,7 +72,7 @@ grep -q -- "-L$prefix/lib" "$work_dir/pkg-config.flags" \
 grep -q -- "-lfusepromise" "$work_dir/pkg-config.flags" \
     || fail "pkg-config output missing library"
 
-"$nm_bin" -D --defined-only target/debug/libfusepromise.so \
+"$nm_bin" -D --defined-only "$artifact_dir/libfusepromise.so" \
     | awk '{print $3}' | sort > "$work_dir/symbols.actual"
 cat > "$work_dir/symbols.expected" <<'SYMBOLS'
 fp_context_close
