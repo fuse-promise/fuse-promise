@@ -1,187 +1,142 @@
 # fuse-promise
 
-Linux promised files, implemented as a user-space FUSE runtime.
+Linux user-space Promise filesystem runtime built on FUSE3.
 
-`fuse-promise` lets a provider publish a filesystem tree before the file contents are present locally. Applications see ordinary paths. Metadata is available immediately. File data is supplied later, on demand, when a process reads the file. A promised file or directory can also be materialized into real local storage.
+`fuse-promise` lets a provider publish a filesystem tree before file contents
+exist locally. Metadata is visible immediately through ordinary paths. File
+bytes are supplied on demand when a process reads the file, or written into
+local storage through materialize.
 
-The project is a system component. It is not a clipboard application, a cloud client, a remote desktop tool, or a storage provider. Those systems can be built on top of `fuse-promise` through its public C ABI.
+This repository is a system component. It is not a storage provider, clipboard
+tool, desktop integration, cloud client, or transport layer.
 
-## Status
+## Interface
 
-This repository has implemented the read-only Promise filesystem MVP, the
-materialize/cache path, and the first stable C ABI release surface.
-
-The current tree contains the public C header, Rust workspace skeleton, core
-Promise metadata model, C ABI entry points, initial daemon and CLI entry
-points, private framed status IPC used by `fpctl status`, private provider
-register/unregister IPC messages, private Promise metadata commit IPC, and
-private provider read request/response message helpers with connection-scoped
-provider disconnect propagation. `fp_provider_register()` now registers with
-the daemon through private IPC, and provider read requests received on that
-connection are dispatched to the public C callback. The runtime can plan
-provider-owned file reads with provider-gone and EOF handling, and the daemon
-IPC state can route provider read requests over registered provider
-connections. The daemon has a feature-gated FUSE mount lifecycle skeleton
-behind the `fuse-mount` feature; default builds report `fuse_adapter=disabled`
-until the libfuse3 development dependency is present. The feature-gated adapter
-now contains read-only `lookup`, `getattr`, `readdir`, `open`, `read`, and
-`release` callbacks over the daemon runtime and provider read routing. Real
-mounted committed-tree smokes are available as `tests/read-only-mvp-smoke.sh`,
-`tests/read-through-cache-smoke.sh`, and `tests/performance-stress.sh`; they
-cover `fpctl status`, `fpctl list`, `find`, `ls`, `stat`, offset `dd`, `cat`,
-`cp`, file materialize, directory materialize, provider-gone read errors, the
-optional read-through cache mode, large metadata-only tree traversal, and
-bounded random reads from a large promised file.
-File and directory subtree materialize are implemented for the
-fail-on-conflict, overwrite, and rename policies with progress reporting;
-progress callbacks can cancel materialize with `FP_ERR_CANCELLED`. The runtime exposes
-`cache_policy=no-cache` by default through `fpctl status`; an opt-in daemon
-`--cache=read-through` mode
-coalesces reads into cache chunks, stores complete read ranges in memory, and
-prefetches the next sequential range. Reads for completely materialized files
-can use the local materialized path after the provider disconnects. Private
-metadata commit is gated on commit readiness so disabled, unmounted, or
-mount-only daemon state cannot create invisible promises.
-`fp_promise_commit()` now routes through the daemon and can return a visible
-path only when the daemon reports a commit-ready FUSE namespace; default
-disabled or unmounted builds still return `FP_ERR_UNAVAILABLE`.
-`tests/abi-hardening.sh` verifies the public C ABI layout, exported symbols,
-invalid-argument behavior, generated pkg-config metadata, and public C example
-linking.
-
-The completed read-only Promise filesystem MVP supports:
-
-- Commit metadata-only file and directory trees.
-- Expose them under a user-session FUSE mount.
-- Support `stat`, `readdir`, `open`, and offset-based `read`.
-- Route reads to provider callbacks.
-
-Final stable ABI release preparation is tracked separately and remains the
-current release-readiness gate.
-
-## Why
-
-Linux has strong support for user-space filesystems through FUSE, but it does not provide a common Promise file model.
-
-Many systems need this model:
-
-- Remote file handoff.
-- Cross-device file transfer.
-- Lazy cloud or workspace mounts.
-- Large file workflows where copying metadata first is cheap.
-- Applications that can declare files now and provide bytes later.
-
-Without a shared layer, each application invents its own placeholder format, transport, lifecycle, and materialization behavior. `fuse-promise` defines that missing lower layer as a reusable Linux component.
-
-## Model
-
-A promised file is a regular-looking file whose metadata is known before its bytes are local.
-
-```text
-provider process
-  publishes metadata
-  supplies bytes on read
-
-fuse-promise
-  owns the Promise tree
-  exposes FUSE paths
-  routes lazy reads
-  materializes real files
-
-applications
-  use normal filesystem APIs
-```
-
-Default mount:
-
-```text
-$XDG_RUNTIME_DIR/fuse-promise/
-```
-
-Typical install shape:
-
-```text
-/usr/include/fuse-promise/fuse-promise.h
-/usr/lib/libfusepromise.so.0
-/usr/lib/libfusepromise.so
-/usr/lib/pkgconfig/fuse-promise.pc
-/usr/lib/systemd/user/fuse-promised.service
-```
-
-## Public Interface
-
-The implementation is expected to be written primarily in Rust.
-
-The public interface is not Rust. The stable system interface is a C ABI:
+The public interface is the C ABI:
 
 ```c
 #include <fuse-promise/fuse-promise.h>
 ```
 
-Public consumers link `libfusepromise.so`. Internal daemon communication is private and may change.
+Consumers link:
 
-This keeps the component usable from C, C++, Rust, Go, Python, Qt, GTK, desktop services, command-line tools, and other Linux software.
+```sh
+pkg-config --cflags --libs fuse-promise
+```
 
-## Boundaries
+Installed public surface:
 
-`fuse-promise` provides:
+```text
+/usr/include/fuse-promise/fuse-promise.h
+/usr/lib/libfusepromise.so.1
+/usr/lib/libfusepromise.so
+/usr/lib/pkgconfig/fuse-promise.pc
+/usr/bin/fuse-promised
+/usr/bin/fpctl
+/usr/lib/systemd/user/fuse-promised.service
+```
 
-- Promise filesystem semantics.
-- A user-session daemon.
-- A FUSE-backed runtime.
-- A stable C ABI.
-- Provider registration and lazy read routing.
-- Materialization into real local files.
-- Runtime lifecycle, inode, metadata, and cache policy.
+Daemon IPC is private and is not a supported API.
 
-`fuse-promise` does not provide:
+## Runtime Requirements
 
-- Clipboard synchronization.
-- Desktop drag-and-drop adapters.
-- Cloud-provider integrations.
-- P2P transport.
-- Application-specific remote file protocols.
+Default user-session mount:
 
-Those projects should live outside this repository and use the public API.
+```text
+$XDG_RUNTIME_DIR/fuse-promise/
+```
 
-## Documentation
+Required runtime dependencies for mounted operation:
 
-- [Project Statement](docs/project-statement.md)
-- [Requirements](docs/requirements.md)
-- [Architecture](docs/architecture.md)
-- [Implementation Decisions](docs/implementation-decisions.md)
-- [Language and ABI](docs/language-and-abi.md)
-- [Promise Model](docs/promise-model.md)
-- [Public API](docs/public-api.md)
-- [Runtime](docs/runtime.md)
-- [Security](docs/security.md)
-- [Packaging](docs/packaging.md)
-- [Stable ABI Release Readiness](docs/stable-abi-release.md)
-- [1.0.0 Stable ABI Release Notes](docs/release-notes-stable.md)
-- [0.1.0 Developer Preview Release Notes](docs/release-notes-0.1.0.md)
-- [Development Style](docs/development-style.md)
-- [Roadmap](docs/roadmap.md)
-- [Progress Goals](docs/progress.md)
-- [Changelog](CHANGELOG.md)
+```text
+Linux FUSE kernel support
+/dev/fuse
+fuse3
+libfuse3
+fusermount3
+```
+
+Packaged builds target Ubuntu 22.04 or newer.
+
+## Build and Test
+
+Default workspace build:
+
+```sh
+cargo build --workspace --locked
+cargo test --workspace --locked
+```
+
+FUSE-enabled daemon build:
+
+```sh
+cargo build -p fuse-promise-daemon --features fuse-mount --locked
+```
+
+Required system packages on Debian/Ubuntu:
+
+```sh
+sudo apt-get install build-essential pkg-config libfuse3-dev fuse3
+```
+
+Release gate:
+
+```sh
+BUILD_PROFILE=release SONAME_MAJOR=1 tests/stable-release-gates.sh
+```
+
+The full gate requires `/dev/fuse`, `fusermount3`, and libfuse3 development
+metadata.
+
+## Install and Package
+
+Developer install into `/usr/local`:
+
+```sh
+scripts/install-dev.sh
+```
+
+Distribution-style staging:
+
+```sh
+DESTDIR="$pkgdir" PREFIX=/usr BUILD_PROFILE=release SONAME_MAJOR=1 DAEMON_FEATURES=fuse-mount scripts/install-dev.sh
+```
+
+Release packaging uses nFPM:
+
+```sh
+scripts/package-linux.sh
+```
+
+Release artifacts:
+
+```text
+fuse-promise_<version>-1_amd64.deb
+fuse-promise_<version>-1_arm64.deb
+fuse-promise-<version>-1.x86_64.rpm
+fuse-promise-<version>-1.aarch64.rpm
+fuse-promise-<version>.tar.gz
+SHA256SUMS
+```
 
 ## Source Layout
 
 ```text
-include/fuse-promise/fuse-promise.h  public C ABI
-crates/fuse-promise-runtime/         core Promise metadata model
-crates/fuse-promise-ipc/             private daemon IPC helpers
-crates/fuse-promise-ffi/             libfusepromise C ABI implementation
-crates/fuse-promise-daemon/          fuse-promised daemon entry point
-tools/fpctl/                         administrative CLI
-scripts/install-dev.sh               developer install helper
-pkgconfig/fuse-promise.pc.in         pkg-config template
-systemd/user/fuse-promised.service.in user service template
+include/fuse-promise/        public C ABI
+crates/fuse-promise-ffi/     libfusepromise implementation
+crates/fuse-promise-daemon/  fuse-promised daemon
+crates/fuse-promise-runtime/ core runtime model
+crates/fuse-promise-ipc/     private daemon IPC
+tools/fpctl/                 administrative CLI
+tests/                       release gates
+packaging/                   package metadata
+docs/                        design documents
 ```
 
-## Repository Description
+## Documentation
 
-Suggested short description for GitHub:
-
-```text
-Linux user-space Promise filesystem runtime built on FUSE, with lazy reads and materialize support.
-```
+- [Architecture](docs/architecture.md)
+- [Public API](docs/public-api.md)
+- [Packaging](docs/packaging.md)
+- [Security](docs/security.md)
+- [Changelog](CHANGELOG.md)
