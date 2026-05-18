@@ -172,7 +172,7 @@ Minimum message families:
 - `Status`. Implemented.
 - `ProviderRegister`. Implemented as a private message.
 - `ProviderUnregister`. Implemented as a private message.
-- `PromiseCommit`.
+- `PromiseCommit`. Implemented as private daemon-owned metadata commit.
 - `ProviderReadRequest`.
 - `ProviderReadResponse`.
 - `MaterializeStart`.

@@ -1,6 +1,7 @@
 use bincode::{Decode, Encode};
 use fuse_promise_runtime::{
-    default_control_socket_path, default_mount_path, Runtime, Status, API_VERSION,
+    default_control_socket_path, default_mount_path, NodeAttr, PromiseBuilder, Runtime, Status,
+    API_VERSION,
 };
 use std::fmt::Write as _;
 use std::fs;
@@ -56,6 +57,7 @@ enum Request {
     ProviderUnregister {
         provider_id: u64,
     },
+    PromiseCommit(PromiseCommitBody),
 }
 
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
@@ -69,6 +71,7 @@ enum Response {
         provider_id: u64,
     },
     ProviderUnregistered,
+    PromiseCommitted(PromiseCommittedBody),
     Error(ErrorBody),
 }
 
@@ -82,6 +85,33 @@ struct StatusBody {
     fuse_adapter: String,
     providers: u64,
     promises: u64,
+}
+
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
+struct PromiseCommitBody {
+    provider_id: u64,
+    nodes: Vec<PromiseNodeBody>,
+}
+
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
+struct PromiseNodeBody {
+    kind: PromiseNodeKindBody,
+    relative_path: String,
+    provider_node_id: String,
+    mode: u32,
+    size: u64,
+    mtime_nsec: i64,
+}
+
+#[derive(Debug, Clone, Copy, Encode, Decode, PartialEq, Eq)]
+enum PromiseNodeKindBody {
+    File,
+    Directory,
+}
+
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
+struct PromiseCommittedBody {
+    promise_id: String,
 }
 
 impl StatusBody {
@@ -134,6 +164,38 @@ pub struct ProviderRegistration {
     pub provider_id: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromiseCommitRequest {
+    pub provider_id: u64,
+    pub nodes: Vec<PromiseNodeSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromiseNodeSpec {
+    pub kind: PromiseNodeKind,
+    pub relative_path: String,
+    pub provider_node_id: String,
+    pub attr: PromiseNodeAttr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromiseNodeKind {
+    File,
+    Directory,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PromiseNodeAttr {
+    pub mode: u32,
+    pub size: u64,
+    pub mtime_nsec: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromiseCommitResponse {
+    pub promise_id: String,
+}
+
 pub fn query_status(socket_path: &Path) -> io::Result<String> {
     let mut stream = connect_and_hello(socket_path)?;
 
@@ -169,6 +231,24 @@ pub fn unregister_provider(socket_path: &Path, provider_id: u64) -> io::Result<(
         Response::Error(error) => Err(error_to_io(error)),
         _ => Err(invalid_data(
             "daemon returned an unexpected provider unregister response",
+        )),
+    }
+}
+
+pub fn commit_promise(
+    socket_path: &Path,
+    request: PromiseCommitRequest,
+) -> io::Result<PromiseCommitResponse> {
+    let mut stream = connect_and_hello(socket_path)?;
+
+    write_frame(&mut stream, &Request::PromiseCommit(request.into_body()))?;
+    match read_response(&mut stream)? {
+        Response::PromiseCommitted(response) => Ok(PromiseCommitResponse {
+            promise_id: response.promise_id,
+        }),
+        Response::Error(error) => Err(error_to_io(error)),
+        _ => Err(invalid_data(
+            "daemon returned an unexpected promise commit response",
         )),
     }
 }
@@ -292,10 +372,73 @@ fn handle_client(mut stream: UnixStream, runtime: &Arc<Mutex<Runtime>>) -> io::R
                     "client must send hello before provider unregister",
                 )?;
             }
+            Request::PromiseCommit(request) if negotiated => {
+                handle_promise_commit(&mut stream, runtime, request)?;
+            }
+            Request::PromiseCommit(_) => {
+                write_error(
+                    &mut stream,
+                    ErrorCode::InvalidRequest,
+                    "client must send hello before promise commit",
+                )?;
+            }
         }
     }
 
     Ok(())
+}
+
+fn handle_promise_commit(
+    stream: &mut UnixStream,
+    runtime: &Arc<Mutex<Runtime>>,
+    request: PromiseCommitBody,
+) -> io::Result<()> {
+    let Some(provider_id) = fuse_promise_runtime::ProviderId::from_raw(request.provider_id) else {
+        write_error(
+            stream,
+            ErrorCode::InvalidRequest,
+            "provider id must be nonzero",
+        )?;
+        return Ok(());
+    };
+
+    let mut builder = PromiseBuilder::new(provider_id);
+    for node in request.nodes {
+        let attr = NodeAttr::new(node.mode, node.size, node.mtime_nsec);
+        let result = match node.kind {
+            PromiseNodeKindBody::File => {
+                builder.add_file(&node.relative_path, attr, &node.provider_node_id)
+            }
+            PromiseNodeKindBody::Directory => {
+                builder.add_dir(&node.relative_path, attr, &node.provider_node_id)
+            }
+        };
+
+        if let Err(status) = result {
+            write_status_error(stream, status)?;
+            return Ok(());
+        }
+    }
+
+    let tree = {
+        let mut runtime = runtime
+            .lock()
+            .map_err(|_| io::Error::other("runtime lock poisoned"))?;
+        match runtime.commit_promise(builder) {
+            Ok(tree) => tree,
+            Err(status) => {
+                write_status_error(stream, status)?;
+                return Ok(());
+            }
+        }
+    };
+
+    write_frame(
+        stream,
+        &Response::PromiseCommitted(PromiseCommittedBody {
+            promise_id: tree.promise_id,
+        }),
+    )
 }
 
 fn read_response<R>(reader: &mut R) -> io::Result<Response>
@@ -437,6 +580,35 @@ fn status_to_error_code(status: Status) -> ErrorCode {
         Status::ProviderGone => ErrorCode::ProviderGone,
         Status::VersionMismatch => ErrorCode::VersionMismatch,
         _ => ErrorCode::Internal,
+    }
+}
+
+impl PromiseCommitRequest {
+    fn into_body(self) -> PromiseCommitBody {
+        PromiseCommitBody {
+            provider_id: self.provider_id,
+            nodes: self
+                .nodes
+                .into_iter()
+                .map(PromiseNodeSpec::into_body)
+                .collect(),
+        }
+    }
+}
+
+impl PromiseNodeSpec {
+    fn into_body(self) -> PromiseNodeBody {
+        PromiseNodeBody {
+            kind: match self.kind {
+                PromiseNodeKind::File => PromiseNodeKindBody::File,
+                PromiseNodeKind::Directory => PromiseNodeKindBody::Directory,
+            },
+            relative_path: self.relative_path,
+            provider_node_id: self.provider_node_id,
+            mode: self.attr.mode,
+            size: self.attr.size,
+            mtime_nsec: self.attr.mtime_nsec,
+        }
     }
 }
 
@@ -666,6 +838,70 @@ mod tests {
     }
 
     #[test]
+    fn promise_commit_mutates_runtime() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let server_runtime = Arc::clone(&runtime);
+        let server_thread = thread::spawn(move || handle_client(server, &server_runtime));
+
+        send_hello(&mut client);
+        write_frame(&mut client, &Request::ProviderRegister).unwrap();
+        let provider_id = match read_frame(&mut client).unwrap().unwrap() {
+            Response::ProviderRegistered { provider_id } => provider_id,
+            other => panic!("unexpected response: {other:?}"),
+        };
+
+        write_frame(
+            &mut client,
+            &Request::PromiseCommit(sample_commit_request(provider_id).into_body()),
+        )
+        .unwrap();
+        let response: Response = read_frame(&mut client).unwrap().unwrap();
+        assert_eq!(
+            response,
+            Response::PromiseCommitted(PromiseCommittedBody {
+                promise_id: "promise-1".to_owned(),
+            })
+        );
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
+
+        let runtime = runtime.lock().unwrap();
+        let tree = runtime.promise("promise-1").unwrap();
+        assert!(tree.get("docs/readme.txt").is_some());
+        assert_eq!(runtime.promise_count(), 1);
+    }
+
+    #[test]
+    fn promise_commit_rejects_unknown_provider() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let server_runtime = Arc::clone(&runtime);
+        let server_thread = thread::spawn(move || handle_client(server, &server_runtime));
+
+        send_hello(&mut client);
+        write_frame(
+            &mut client,
+            &Request::PromiseCommit(sample_commit_request(99).into_body()),
+        )
+        .unwrap();
+        let response: Response = read_frame(&mut client).unwrap().unwrap();
+
+        assert_eq!(
+            response,
+            Response::Error(ErrorBody {
+                code: ErrorCode::ProviderGone,
+                message: "provider gone".to_owned(),
+            })
+        );
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
+        assert_eq!(runtime.lock().unwrap().promise_count(), 0);
+    }
+
+    #[test]
     fn provider_helpers_use_unix_socket() {
         let socket_path = unique_socket_path();
         let listener = UnixListener::bind(&socket_path).unwrap();
@@ -688,6 +924,39 @@ mod tests {
             runtime.lock().unwrap().provider(provider_id).unwrap().state,
             ProviderState::Disconnected
         );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn commit_helper_uses_unix_socket() {
+        let socket_path = unique_socket_path();
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let server_runtime = Arc::clone(&runtime);
+        let server_thread = thread::spawn(move || {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().unwrap();
+                handle_client(stream, &server_runtime).unwrap();
+            }
+        });
+
+        let registration = register_provider(&socket_path).unwrap();
+        let response = commit_promise(
+            &socket_path,
+            sample_commit_request(registration.provider_id),
+        )
+        .unwrap();
+
+        assert_eq!(response.promise_id, "promise-1");
+        server_thread.join().unwrap();
+        assert!(runtime
+            .lock()
+            .unwrap()
+            .promise("promise-1")
+            .unwrap()
+            .get("docs/readme.txt")
+            .is_some());
 
         let _ = fs::remove_file(socket_path);
     }
@@ -721,5 +990,33 @@ mod tests {
             "fuse-promise-ipc-{}-{nanos}.sock",
             std::process::id()
         ))
+    }
+
+    fn sample_commit_request(provider_id: u64) -> PromiseCommitRequest {
+        PromiseCommitRequest {
+            provider_id,
+            nodes: vec![
+                PromiseNodeSpec {
+                    kind: PromiseNodeKind::Directory,
+                    relative_path: "docs".to_owned(),
+                    provider_node_id: "remote-dir-1".to_owned(),
+                    attr: PromiseNodeAttr {
+                        mode: 0o755,
+                        size: 0,
+                        mtime_nsec: 0,
+                    },
+                },
+                PromiseNodeSpec {
+                    kind: PromiseNodeKind::File,
+                    relative_path: "docs/readme.txt".to_owned(),
+                    provider_node_id: "remote-file-1".to_owned(),
+                    attr: PromiseNodeAttr {
+                        mode: 0o644,
+                        size: 12,
+                        mtime_nsec: 0,
+                    },
+                },
+            ],
+        }
     }
 }

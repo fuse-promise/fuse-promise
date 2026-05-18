@@ -12,11 +12,12 @@ This repository is in the early implementation phase.
 
 The current tree contains the public C header, Rust workspace skeleton, core
 Promise metadata model, C ABI entry points, initial daemon and CLI entry
-points, private framed status IPC used by `fpctl status`, and private provider
-register/unregister IPC messages. The FUSE adapter, commit/read IPC, provider
-read routing, and materialize engine are still under development. The public
-commit and materialize calls currently return `FP_ERR_UNAVAILABLE` rather than
-claiming a visible FUSE path that does not exist yet.
+points, private framed status IPC used by `fpctl status`, private provider
+register/unregister IPC messages, and private Promise metadata commit IPC. The
+FUSE adapter, read IPC, provider read routing, and materialize engine are still
+under development. The public commit and materialize calls currently return
+`FP_ERR_UNAVAILABLE` rather than claiming a visible FUSE path that does not
+exist yet.
 
 The first implementation target is a read-only Promise filesystem MVP:
 

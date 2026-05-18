@@ -29,6 +29,7 @@ plugins, or application-specific integrations.
 - [x] Private IPC crate has a Unix socket with bounded framed status messages.
 - [x] `fuse-promised --foreground` serves the private status IPC socket.
 - [x] Private IPC can register and unregister daemon-owned provider sessions.
+- [x] Private IPC can commit metadata snapshots into the daemon-owned runtime.
 - [x] `fpctl status` queries the daemon when connected and falls back to
   `daemon=not-connected` when disconnected.
 - [x] `fp_promise_commit()` and `fp_materialize()` return
@@ -121,7 +122,7 @@ Acceptance:
 - [x] Add max message size checks.
 - [x] Add Unix peer credential validation where available.
 - [x] Add provider register/unregister messages.
-- [ ] Add Promise commit request/response messages.
+- [x] Add Promise commit request/response messages.
 - [ ] Add provider read request/response messages.
 - [ ] Add provider disconnect propagation.
 - [ ] Keep all IPC types private to internal crates.
