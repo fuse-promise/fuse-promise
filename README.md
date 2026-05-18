@@ -22,11 +22,13 @@ provider-owned file reads with provider-gone and EOF handling, and the daemon
 IPC state can route provider read requests over registered provider
 connections. The daemon has a feature-gated FUSE mount lifecycle skeleton
 behind the `fuse-mount` feature; default builds report `fuse_adapter=disabled`
-until the libfuse3 development dependency is present. Read-only FUSE operations
-and the materialize engine are still under development. Private metadata commit
-is gated on commit readiness so disabled, unmounted, or mount-only daemon state
-cannot create invisible promises. The public commit and materialize calls
-currently return
+until the libfuse3 development dependency is present. The feature-gated adapter
+now contains read-only `lookup`, `getattr`, `readdir`, `open`, `read`, and
+`release` callbacks over the daemon runtime and provider read routing; real
+mount verification still requires system libfuse3 development metadata. The
+materialize engine is still under development. Private metadata commit is gated
+on commit readiness so disabled, unmounted, or mount-only daemon state cannot
+create invisible promises. The public commit and materialize calls currently return
 `FP_ERR_UNAVAILABLE` rather than claiming a visible FUSE path that does not
 exist yet.
 

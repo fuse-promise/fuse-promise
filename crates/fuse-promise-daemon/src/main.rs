@@ -40,7 +40,7 @@ fn main() -> ExitCode {
 
             let runtime = Arc::new(Mutex::new(Runtime::new()));
             let ipc_state = IpcState::new(Arc::clone(&runtime));
-            let fuse_mount = match fuse_adapter::start(&path, runtime) {
+            let fuse_mount = match fuse_adapter::start(&path, ipc_state.clone()) {
                 Ok(mount) => mount,
                 Err(error) => {
                     eprintln!("fuse-promised: failed to mount {}: {error}", path.display());

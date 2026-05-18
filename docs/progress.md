@@ -42,6 +42,9 @@ plugins, or application-specific integrations.
 - [~] FUSE mount lifecycle is wired behind the daemon `fuse-mount` feature;
   the current environment still lacks `pkg-config` / libfuse3 development
   metadata for enabled-feature verification.
+- [~] Feature-gated read-only FUSE callbacks are wired to runtime lookup,
+  directory, and provider read routing; real mount verification remains blocked
+  by the missing libfuse3 development metadata.
 - [x] Runtime rejects missing, relative, non-directory, foreign-owned, or
   group/other-accessible `XDG_RUNTIME_DIR` paths.
 - [x] `fpctl status` queries the daemon when connected and falls back to
@@ -207,13 +210,13 @@ fpctl status
 
 ### G1.6 Read-Only FUSE Operations
 
-- [ ] Implement `lookup`.
-- [ ] Implement `getattr`.
-- [ ] Implement `readdir`.
-- [ ] Implement `open`.
-- [ ] Implement offset-based `read`.
-- [ ] Implement `release`.
-- [ ] Map runtime failures to deterministic `errno` values.
+- [~] Implement `lookup`.
+- [~] Implement `getattr`.
+- [~] Implement `readdir`.
+- [~] Implement `open`.
+- [~] Implement offset-based `read`.
+- [~] Implement `release`.
+- [~] Map runtime failures to deterministic `errno` values.
 
 Acceptance:
 
