@@ -580,6 +580,7 @@ fn io_error_to_errno(error: &io::Error) -> fuser::Errno {
         io::ErrorKind::NotFound => fuser::Errno::ENOENT,
         io::ErrorKind::PermissionDenied => fuser::Errno::EACCES,
         io::ErrorKind::TimedOut => fuser::Errno::ETIMEDOUT,
+        io::ErrorKind::Interrupted => fuser::Errno::ECANCELED,
         _ => fuser::Errno::EIO,
     }
 }

@@ -47,11 +47,13 @@ provider_err="$work_dir/provider.err"
 provider_bin="$work_dir/read-only-mvp-provider"
 provider_lib_dir="$work_dir/lib"
 pread_bin="$work_dir/pread-compat"
+cancel_bin="$work_dir/materialize-cancel"
 expected_file="$work_dir/expected.txt"
 expected_tree="$work_dir/expected-tree"
 copy_file="$work_dir/copied.txt"
 materialize_dir="$work_dir/materialized"
 materialize_tree_dir="$work_dir/materialized-tree"
+materialize_cancel_dir="$work_dir/materialized-cancel"
 rsync_dir="$work_dir/rsync-copy"
 tar_file="$work_dir/docs.tar"
 tar_extract_dir="$work_dir/tar-extract"
@@ -78,7 +80,7 @@ trap cleanup EXIT
 mkdir -m 700 "$runtime_dir"
 mkdir "$provider_lib_dir"
 mkdir "$materialize_dir"
-mkdir -p "$expected_tree/docs/guides" "$expected_tree/docs/empty" "$materialize_tree_dir" "$rsync_dir/docs" "$tar_extract_dir"
+mkdir -p "$expected_tree/docs/guides" "$expected_tree/docs/empty" "$materialize_tree_dir" "$materialize_cancel_dir" "$rsync_dir/docs" "$tar_extract_dir"
 printf 'hello from fuse-promise\n' > "$expected_file"
 cp "$expected_file" "$expected_tree/docs/readme.txt"
 printf 'setup guide\n' > "$expected_tree/docs/guides/setup.txt"
@@ -97,6 +99,11 @@ cc -I"$repo_dir/include" "$repo_dir/tests/read_only_mvp_provider.c" \
     -o "$provider_bin"
 cc -std=c11 -Wall -Wextra -Werror "$repo_dir/tests/pread_compat.c" \
     -o "$pread_bin"
+cc -std=c11 -Wall -Wextra -Werror -I"$repo_dir/include" \
+    "$repo_dir/tests/materialize_cancel.c" \
+    -L"$provider_lib_dir" -lfusepromise \
+    "-Wl,-rpath,$provider_lib_dir" \
+    -o "$cancel_bin"
 
 XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fuse-promised" \
     --foreground > "$daemon_log" 2>&1 &
@@ -278,6 +285,15 @@ diff -r "$expected_tree/docs" "$materialize_tree_dir/docs (1)" >/dev/null \
 directory_rename_stat=$(stat -c '%a %Y' "$materialize_tree_dir/docs (1)" "$materialize_tree_dir/docs (1)/guides" "$materialize_tree_dir/docs (1)/empty")
 [ "$directory_rename_stat" = "$(printf '755 0\n755 0\n755 0')" ] \
     || fail "directory rename metadata mismatch: $directory_rename_stat"
+LD_LIBRARY_PATH="$provider_lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    XDG_RUNTIME_DIR="$runtime_dir" "$cancel_bin" "$docs_path" "$materialize_cancel_dir" \
+    > "$work_dir/materialize-cancel.out"
+grep -q '^status=cancelled$' "$work_dir/materialize-cancel.out" \
+    || fail "C ABI materialize cancellation did not return cancelled"
+grep -q '^callbacks=2$' "$work_dir/materialize-cancel.out" \
+    || fail "C ABI materialize cancellation did not observe expected progress callbacks"
+[ ! -e "$materialize_cancel_dir/docs" ] \
+    || fail "cancelled materialize left a partial target directory"
 
 kill "$provider_pid"
 wait "$provider_pid" || true

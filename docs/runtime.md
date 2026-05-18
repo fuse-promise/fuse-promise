@@ -156,8 +156,9 @@ read verification is covered by the smoke harness. File and directory subtree
 materialize IPC are implemented for fail-on-conflict, overwrite, and rename
 behavior. Reads for materialized files can use the local materialized path
 after provider disconnect. An opt-in read-through cache can satisfy fully
-cached ranges after provider disconnect; cancellation is still under
-development.
+cached ranges after provider disconnect. Materialize progress frames are
+acknowledged by the client; a cancel response aborts the daemon-side operation
+and runs the normal partial-target cleanup path.
 
 `libfusepromise.so` provider registration uses this private daemon IPC and no
 longer creates authoritative provider sessions in a client-local runtime. Its
@@ -267,8 +268,8 @@ Initial read-only FUSE mapping:
 | Invalid read offset or size | `read` | `EINVAL` |
 | Runtime lock or internal IO failure | all FUSE callbacks | `EIO` |
 
-Timeouts and cancellation should map to `ETIMEDOUT` and `ECANCELED` when those
-states exist in the runtime.
+Timeouts and cancellation map to `ETIMEDOUT` and `ECANCELED` when those states
+exist in the runtime.
 
 ## Observability
 

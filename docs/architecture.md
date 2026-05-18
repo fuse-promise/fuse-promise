@@ -378,7 +378,7 @@ request/response message helpers over private Unix sockets. Daemon-side
 provider read routing exists inside the private IPC state; real mounted FUSE
 read verification is covered by the smoke harness, and file plus directory
 subtree materialize IPC supports fail-on-conflict, overwrite, and rename
-behavior for Phase 2. Progress and cancellation remain Phase 2 work.
+behavior, progress reporting, and cancellation for Phase 2.
 Both paths must remain private to `libfusepromise.so` and
 `fuse-promised`. Registered providers are scoped to the IPC connection that
 registered them; closing that connection marks those providers disconnected in

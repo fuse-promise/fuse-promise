@@ -174,6 +174,8 @@ enum Request {
     },
     PromiseCommit(PromiseCommitBody),
     Materialize(MaterializeBody),
+    MaterializeContinue,
+    MaterializeCancel,
     ProviderReadResponse(ProviderReadResponseBody),
 }
 
@@ -458,6 +460,7 @@ enum ErrorCode {
     AlreadyExists,
     ProviderGone,
     Permission,
+    Cancelled,
     Internal,
 }
 
@@ -1005,7 +1008,12 @@ pub fn materialize_file_with_progress(
     loop {
         match read_response(&mut stream)? {
             Response::MaterializeProgress(progress) => {
-                on_progress(MaterializeProgressReport::from_body(progress))?;
+                if let Err(error) = on_progress(MaterializeProgressReport::from_body(progress)) {
+                    let _ = write_frame(&mut stream, &Request::MaterializeCancel);
+                    let _ = read_response(&mut stream);
+                    return Err(error);
+                }
+                write_frame(&mut stream, &Request::MaterializeContinue)?;
             }
             Response::Materialized(response) => {
                 return Ok(MaterializeResponse::from_body(response))
@@ -1304,6 +1312,13 @@ fn handle_client_requests(
                     "client must send hello before materialize",
                 )?;
             }
+            Request::MaterializeContinue | Request::MaterializeCancel => {
+                write_error(
+                    stream,
+                    ErrorCode::InvalidRequest,
+                    "materialize progress control requires an active materialize request",
+                )?;
+            }
             Request::ProviderReadResponse(response) if negotiated => {
                 state.complete_provider_read(registered_providers, response)?;
             }
@@ -1410,7 +1425,12 @@ fn handle_materialize(
 ) -> io::Result<()> {
     match materialize_node_in_state(state, request, |progress| {
         write_frame(stream, &Response::MaterializeProgress(progress.to_body()))
-            .map_err(|_| Status::Io)
+            .map_err(|_| Status::Cancelled)?;
+        match read_frame::<_, Request>(stream).map_err(|_| Status::Cancelled)? {
+            Some(Request::MaterializeContinue) => Ok(()),
+            Some(Request::MaterializeCancel) | None => Err(Status::Cancelled),
+            Some(_) => Err(Status::InvalidArgument),
+        }
     }) {
         Ok(response) => write_frame(stream, &Response::Materialized(response)),
         Err(error) => match error.progress {
@@ -2503,6 +2523,7 @@ fn error_code_to_io_kind(code: ErrorCode) -> io::ErrorKind {
         ErrorCode::ProviderGone => io::ErrorKind::BrokenPipe,
         ErrorCode::AlreadyExists => io::ErrorKind::AlreadyExists,
         ErrorCode::Permission => io::ErrorKind::PermissionDenied,
+        ErrorCode::Cancelled => io::ErrorKind::Interrupted,
         ErrorCode::Internal => io::ErrorKind::Other,
     }
 }
@@ -2515,6 +2536,7 @@ fn status_to_error_code(status: Status) -> ErrorCode {
         Status::NotFound => ErrorCode::NotFound,
         Status::AlreadyExists => ErrorCode::AlreadyExists,
         Status::ProviderGone => ErrorCode::ProviderGone,
+        Status::Cancelled => ErrorCode::Cancelled,
         Status::VersionMismatch => ErrorCode::VersionMismatch,
         _ => ErrorCode::Internal,
     }
@@ -2527,6 +2549,7 @@ fn io_error_to_status(error: &io::Error) -> Status {
         io::ErrorKind::AlreadyExists => Status::AlreadyExists,
         io::ErrorKind::PermissionDenied => Status::Permission,
         io::ErrorKind::TimedOut => Status::Timeout,
+        io::ErrorKind::Interrupted => Status::Cancelled,
         io::ErrorKind::ConnectionRefused
         | io::ErrorKind::ConnectionReset
         | io::ErrorKind::BrokenPipe => Status::ProviderGone,

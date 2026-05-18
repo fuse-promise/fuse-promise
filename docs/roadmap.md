@@ -40,7 +40,7 @@ For fixed implementation dependency and sequencing decisions, see
 - Implement file materialization.
 - Implement recursive directory materialization.
 - Add conflict policies.
-- Add progress and cancellation.
+- Add progress and cancellation. Implemented for materialize.
 - Add materialized node state.
 
 ## Phase 3: ABI Hardening

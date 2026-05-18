@@ -78,7 +78,7 @@ Status meanings:
 | `FP_ERR_PROVIDER_GONE` | The provider that owns the Promise disconnected before the operation could be satisfied. |
 | `FP_ERR_IO` | An internal or underlying filesystem I/O failure occurred. |
 | `FP_ERR_TIMEOUT` | A provider or daemon operation timed out. |
-| `FP_ERR_CANCELLED` | A cancellable operation was cancelled. The current developer preview reserves this value before public cancellation APIs are implemented. |
+| `FP_ERR_CANCELLED` | A cancellable operation was cancelled. |
 | `FP_ERR_VERSION_MISMATCH` | The caller's ABI version or private client/daemon protocol version is incompatible with the runtime. |
 
 Filesystem errno mappings used by FUSE callbacks:
@@ -260,7 +260,7 @@ IPC and returns `FP_ERR_UNAVAILABLE` until the daemon reports a commit-ready
 FUSE namespace. When commit-ready, the daemon owns the namespace and may return
 the visible Promise path. `fp_materialize()` supports file and directory
 subtree materialize with `FP_CONFLICT_FAIL`, `FP_CONFLICT_OVERWRITE`, and
-`FP_CONFLICT_RENAME`; cancellation remains under development.
+`FP_CONFLICT_RENAME`.
 `FP_CONFLICT_RENAME` chooses a non-existing root target before materializing:
 files receive a ` (N)` suffix before the extension, directories receive the
 suffix after the directory name, and subtree child names are preserved under
@@ -269,7 +269,9 @@ When `fp_materialize_options_t.progress` is non-NULL, the synchronous
 `fp_materialize()` call invokes it with best-effort progress snapshots. The
 `target_path` pointer in `fp_materialize_progress_t` is valid only for the
 duration of the callback. Returning any status other than `FP_OK` aborts the
-operation and returns that status to the caller.
+operation and returns that status to the caller. Returning `FP_ERR_CANCELLED`
+from the progress callback cancels the daemon-side materialize job, cleans up
+targets owned by the job, and returns `FP_ERR_CANCELLED`.
 Materialized files can satisfy later reads through their local materialized
 paths, and an opt-in daemon read-through cache can coalesce reads, prefetch
 sequential ranges, and satisfy fully cached ranges without changing the public

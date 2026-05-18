@@ -33,7 +33,7 @@ optional read-through cache mode, large metadata-only tree traversal, and
 bounded random reads from a large promised file.
 File and directory subtree materialize are implemented for the
 fail-on-conflict, overwrite, and rename policies with progress reporting;
-cancellation remains under development. The runtime exposes
+progress callbacks can cancel materialize with `FP_ERR_CANCELLED`. The runtime exposes
 `cache_policy=no-cache` by default through `fpctl status`; an opt-in daemon
 `--cache=read-through` mode
 coalesces reads into cache chunks, stores complete read ranges in memory, and
@@ -55,7 +55,7 @@ The first implementation target is a read-only Promise filesystem MVP:
 - Support `stat`, `readdir`, `open`, and offset-based `read`.
 - Route reads to provider callbacks.
 
-Cancellation and final stable ABI release preparation remain later phases.
+Final stable ABI release preparation remains a later phase.
 
 ## Why
 

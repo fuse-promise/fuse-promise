@@ -53,8 +53,8 @@ The first stable ABI release remains blocked until these are resolved:
 
 - Decide whether the implemented materialize conflict policies are stable
   public ABI commitments.
-- Decide whether the progress callback is a stable public ABI commitment and
-  whether cancellation APIs are part of the first stable ABI or deferred.
+- Decide whether the progress callback and progress-callback cancellation are
+  stable public ABI commitments.
 - Reconcile `CHANGELOG.md` with the chosen stability statement.
 - Re-run ABI hardening against the exact release build artifact.
 - Tag the release only after the installed header, pkg-config metadata, soname,

@@ -246,7 +246,7 @@ Minimum message families:
   fail-on-conflict, overwrite, and rename behavior.
 - `MaterializeProgress`. Implemented as private progress frames forwarded to
   `fpctl --progress` and the public materialize progress callback.
-- `MaterializeCancel`.
+- `MaterializeCancel`. Implemented as the progress-frame cancel response.
 - Structured error response.
 
 IPC validation rules:
