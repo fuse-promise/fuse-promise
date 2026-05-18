@@ -49,6 +49,8 @@ plugins, or application-specific integrations.
   group/other-accessible `XDG_RUNTIME_DIR` paths.
 - [x] `fpctl status` queries the daemon when connected and falls back to
   `daemon=not-connected` when disconnected.
+- [x] `fpctl list` reports daemon-owned providers, promises, and runtime nodes
+  through private IPC.
 - [x] `fp_promise_commit()` is gated on daemon commit readiness and
   `fp_materialize()` returns `FP_ERR_UNAVAILABLE` until materialize IPC exists.
 - [x] Basic Rust and C header verification passes.
@@ -236,7 +238,7 @@ Reads request only the byte ranges needed by the caller.
 - [ ] `ls`, `stat`, and traversal work without content transfer.
 - [ ] `cat` and `cp` trigger provider lazy reads.
 - [ ] Provider disconnect behavior is deterministic.
-- [ ] `fpctl status` and minimal inspection commands report daemon state.
+- [x] `fpctl status` and minimal inspection commands report daemon state.
 
 ## Phase 2: Materialize
 

@@ -1,7 +1,7 @@
 use bincode::{Decode, Encode};
 use fuse_promise_runtime::{
     default_control_socket_path, default_mount_path, normalize_relative_path, NodeAttr, NodeKind,
-    PromiseBuilder, Runtime, Status, API_VERSION,
+    PromiseBuilder, PromiseState, Runtime, Status, API_VERSION,
 };
 use std::fmt::Write as _;
 use std::fs;
@@ -127,6 +127,7 @@ enum Request {
         api_version: u32,
     },
     Status,
+    Inspect,
     ProviderRegister,
     ProviderUnregister {
         provider_id: u64,
@@ -142,6 +143,7 @@ enum Response {
         api_version: u32,
     },
     Status(StatusBody),
+    Inspect(InspectBody),
     ProviderRegistered {
         provider_id: u64,
     },
@@ -161,6 +163,30 @@ struct StatusBody {
     fuse_adapter: String,
     providers: u64,
     promises: u64,
+}
+
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
+struct InspectBody {
+    providers: u64,
+    promises: Vec<InspectPromiseBody>,
+}
+
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
+struct InspectPromiseBody {
+    promise_id: String,
+    provider_id: u64,
+    state: String,
+    nodes: Vec<InspectNodeBody>,
+}
+
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
+struct InspectNodeBody {
+    relative_path: String,
+    inode: u64,
+    kind: String,
+    size: u64,
+    mode: u32,
+    provider_node_id: String,
 }
 
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
@@ -246,6 +272,69 @@ impl StatusBody {
         let _ = writeln!(output, "fuse_adapter={}", self.fuse_adapter);
         let _ = writeln!(output, "providers={}", self.providers);
         let _ = writeln!(output, "promises={}", self.promises);
+        output
+    }
+}
+
+impl InspectBody {
+    fn from_runtime(runtime: &Runtime) -> Self {
+        Self {
+            providers: runtime.provider_count() as u64,
+            promises: runtime
+                .promises()
+                .map(|tree| InspectPromiseBody {
+                    promise_id: tree.promise_id.clone(),
+                    provider_id: tree.provider_id.raw(),
+                    state: promise_state_text(tree.state).to_owned(),
+                    nodes: tree
+                        .nodes
+                        .values()
+                        .map(|node| InspectNodeBody {
+                            relative_path: if node.relative_path.is_empty() {
+                                ".".to_owned()
+                            } else {
+                                node.relative_path.clone()
+                            },
+                            inode: node.inode,
+                            kind: node_kind_text(node.kind).to_owned(),
+                            size: node.attr.size,
+                            mode: node.attr.mode,
+                            provider_node_id: node.provider_node_id.clone(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    fn encode_text(&self) -> String {
+        let mut output = String::new();
+        let _ = writeln!(output, "ok");
+        let _ = writeln!(output, "providers={}", self.providers);
+        let _ = writeln!(output, "promises={}", self.promises.len());
+        for promise in &self.promises {
+            let _ = writeln!(
+                output,
+                "promise id={} provider={} state={} nodes={}",
+                promise.promise_id,
+                promise.provider_id,
+                promise.state,
+                promise.nodes.len()
+            );
+            for node in &promise.nodes {
+                let _ = writeln!(
+                    output,
+                    "node promise={} path={} inode={} kind={} size={} mode={:o} provider_node={}",
+                    promise.promise_id,
+                    node.relative_path,
+                    node.inode,
+                    node.kind,
+                    node.size,
+                    node.mode,
+                    node.provider_node_id
+                );
+            }
+        }
         output
     }
 }
@@ -619,6 +708,19 @@ pub fn query_status(socket_path: &Path) -> io::Result<String> {
     }
 }
 
+pub fn query_inspect(socket_path: &Path) -> io::Result<String> {
+    let mut stream = connect_and_hello(socket_path)?;
+
+    write_frame(&mut stream, &Request::Inspect)?;
+    match read_response(&mut stream)? {
+        Response::Inspect(inspect) => Ok(inspect.encode_text()),
+        Response::Error(error) => Err(error_to_io(error)),
+        _ => Err(invalid_data(
+            "daemon returned an unexpected inspect response",
+        )),
+    }
+}
+
 pub fn register_provider(socket_path: &Path) -> io::Result<ProviderRegistration> {
     let connection = connect_provider(socket_path)?;
     Ok(ProviderRegistration {
@@ -851,6 +953,23 @@ fn handle_client_requests(
                     stream,
                     ErrorCode::InvalidRequest,
                     "client must send hello before status",
+                )?;
+            }
+            Request::Inspect if negotiated => {
+                let runtime = state
+                    .runtime
+                    .lock()
+                    .map_err(|_| io::Error::other("runtime lock poisoned"))?;
+                write_frame(
+                    stream,
+                    &Response::Inspect(InspectBody::from_runtime(&runtime)),
+                )?;
+            }
+            Request::Inspect => {
+                write_error(
+                    stream,
+                    ErrorCode::InvalidRequest,
+                    "client must send hello before inspect",
                 )?;
             }
             Request::ProviderRegister if negotiated => {
@@ -1373,6 +1492,21 @@ fn validate_read_range(offset: u64, length: u32) -> io::Result<()> {
     Ok(())
 }
 
+fn promise_state_text(state: PromiseState) -> &'static str {
+    match state {
+        PromiseState::Available => "available",
+        PromiseState::ProviderGone => "provider-gone",
+        PromiseState::Materialized => "materialized",
+    }
+}
+
+fn node_kind_text(kind: NodeKind) -> &'static str {
+    match kind {
+        NodeKind::File => "file",
+        NodeKind::Directory => "directory",
+    }
+}
+
 fn encode_error_to_io(error: bincode::error::EncodeError) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error.to_string())
 }
@@ -1665,6 +1799,43 @@ mod tests {
         let tree = runtime.promise("promise-1").unwrap();
         assert!(tree.get("docs/readme.txt").is_some());
         assert_eq!(runtime.promise_count(), 1);
+    }
+
+    #[test]
+    fn inspect_reports_committed_runtime_tree() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let server_state = mounted_state(Arc::clone(&runtime));
+        let server_thread = thread::spawn(move || handle_client_with_state(server, &server_state));
+
+        send_hello(&mut client);
+        write_frame(&mut client, &Request::ProviderRegister).unwrap();
+        let provider_id = match read_frame(&mut client).unwrap().unwrap() {
+            Response::ProviderRegistered { provider_id } => provider_id,
+            other => panic!("unexpected response: {other:?}"),
+        };
+        write_frame(
+            &mut client,
+            &Request::PromiseCommit(sample_commit_request(provider_id).into_body()),
+        )
+        .unwrap();
+        let _response: Response = read_frame(&mut client).unwrap().unwrap();
+
+        write_frame(&mut client, &Request::Inspect).unwrap();
+        let response: Response = read_frame(&mut client).unwrap().unwrap();
+
+        let Response::Inspect(inspect) = response else {
+            panic!("unexpected response: {response:?}");
+        };
+        assert_eq!(inspect.providers, 1);
+        assert_eq!(inspect.promises.len(), 1);
+        assert_eq!(inspect.promises[0].promise_id, "promise-1");
+        assert_eq!(inspect.promises[0].state, "available");
+        assert_eq!(inspect.promises[0].nodes.len(), 3);
+        assert!(inspect.encode_text().contains("path=docs/readme.txt"));
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
     }
 
     #[test]

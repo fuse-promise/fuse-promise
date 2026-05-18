@@ -361,6 +361,7 @@ Minimum private IPC capabilities:
 - Commit Promise tree metadata.
 - Route provider read requests and responses.
 - Query daemon status for `fpctl`.
+- Inspect daemon-owned promises and runtime nodes for `fpctl list`.
 - Request materialization and cancellation.
 - Propagate provider disconnects.
 

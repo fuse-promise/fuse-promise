@@ -1,4 +1,4 @@
-use fuse_promise_ipc::query_status;
+use fuse_promise_ipc::{query_inspect, query_status};
 use fuse_promise_runtime::{default_control_socket_path, default_mount_path};
 use std::env;
 use std::process::ExitCode;
@@ -14,6 +14,14 @@ fn main() -> ExitCode {
             }
             status()
         }
+        Some("list") => {
+            if let Some(extra) = args.next() {
+                eprintln!("fpctl: unexpected argument: {extra}");
+                print_help();
+                return ExitCode::from(2);
+            }
+            list()
+        }
         Some("-h") | Some("--help") | Some("help") => {
             print_help();
             ExitCode::SUCCESS
@@ -22,6 +30,27 @@ fn main() -> ExitCode {
             eprintln!("fpctl: unknown command: {command}");
             print_help();
             ExitCode::from(2)
+        }
+    }
+}
+
+fn list() -> ExitCode {
+    let socket_path = match default_control_socket_path() {
+        Ok(path) => path,
+        Err(status) => {
+            eprintln!("fpctl: {}", status.as_str());
+            return ExitCode::from(1);
+        }
+    };
+
+    match query_inspect(&socket_path) {
+        Ok(response) => {
+            print!("{response}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("fpctl: {error}");
+            ExitCode::from(1)
         }
     }
 }
@@ -62,4 +91,5 @@ fn print_help() {
     println!();
     println!("commands:");
     println!("  status    Query the user-session daemon status");
+    println!("  list      List daemon-owned promises and nodes");
 }
