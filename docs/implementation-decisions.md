@@ -407,6 +407,8 @@ The unversioned linker name points to `libfusepromise.so.0`, which points to
 the workspace-versioned shared library. Distribution packaging may install the
 same artifacts through package-native tooling, but it must preserve the public
 C ABI boundary and generated pkg-config metadata.
+The first stable ABI release will use soname-major `1`; release-profile gates
+can verify this with `SONAME_MAJOR=1`.
 
 ## Implementation Order
 

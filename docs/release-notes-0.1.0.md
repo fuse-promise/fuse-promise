@@ -34,7 +34,8 @@ The stable ABI release remains gated on:
 
 - Final decision on whether the materialize conflict policies, progress
   callback, and progress-callback cancellation are stable commitments.
-- Final soname-major choice for the first stable ABI release.
+- Stable releases use soname-major `1`; this developer-preview release keeps
+  soname-major `0`.
 - ABI hardening against the exact release build artifact.
 - Full FUSE, cache, performance, security, install, and ABI verification gates.
 

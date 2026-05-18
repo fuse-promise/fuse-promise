@@ -66,7 +66,8 @@ version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
     exit 1
 }
 
-cargo build -p fuse-promise-ffi --locked "${cargo_profile_args[@]}"
+FUSE_PROMISE_SONAME_MAJOR="$soname_major" \
+    cargo build -p fuse-promise-ffi --locked "${cargo_profile_args[@]}"
 cargo build -p fpctl --locked "${cargo_profile_args[@]}"
 if [ -n "$daemon_features" ]; then
     cargo build -p fuse-promise-daemon --features "$daemon_features" --locked \

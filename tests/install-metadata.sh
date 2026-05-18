@@ -6,6 +6,7 @@ repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 cc_bin=${CC:-cc}
 pkg_config_bin=${PKG_CONFIG:-pkg-config}
 readelf_bin=${READELF:-readelf}
+soname_major=${SONAME_MAJOR:-0}
 
 fail() {
     echo "error: $*" >&2
@@ -39,9 +40,9 @@ test -f "$prefix/include/fuse-promise/fuse-promise.h" \
 test -f "$prefix/lib/libfusepromise.so.$version" \
     || fail "versioned shared library was not installed"
 "$readelf_bin" -d "$prefix/lib/libfusepromise.so.$version" \
-    | grep -q 'SONAME.*libfusepromise.so.0' \
-    || fail "shared library SONAME is not libfusepromise.so.0"
-test -L "$prefix/lib/libfusepromise.so.0" \
+    | grep -q "SONAME.*libfusepromise.so.$soname_major" \
+    || fail "shared library SONAME is not libfusepromise.so.$soname_major"
+test -L "$prefix/lib/libfusepromise.so.$soname_major" \
     || fail "soname-major shared library link was not installed"
 test -L "$prefix/lib/libfusepromise.so" \
     || fail "linker shared library link was not installed"
@@ -83,8 +84,9 @@ for example in examples/minimal_provider.c examples/materialize.c; do
         "$build_dir/$(basename "$example")" $pkg_flags \
         "-Wl,-rpath,$prefix/lib" \
         -o "$output"
-    "$readelf_bin" -d "$output" | grep -q 'NEEDED.*libfusepromise.so.0' \
-        || fail "$example does not depend on libfusepromise.so.0"
+    "$readelf_bin" -d "$output" \
+        | grep -q "NEEDED.*libfusepromise.so.$soname_major" \
+        || fail "$example does not depend on libfusepromise.so.$soname_major"
 done
 
 XDG_RUNTIME_DIR="$runtime_dir" "$prefix/bin/fpctl" status > "$work_dir/fpctl-status.out"

@@ -9,6 +9,7 @@ pkg_config_bin=${PKG_CONFIG:-pkg-config}
 nm_bin=${NM:-nm}
 readelf_bin=${READELF:-readelf}
 build_profile=${BUILD_PROFILE:-debug}
+soname_major=${SONAME_MAJOR:-0}
 
 case "$build_profile" in
     debug)
@@ -47,14 +48,15 @@ prefix="$work_dir/prefix"
 mkdir -p "$prefix/include/fuse-promise" "$prefix/lib/pkgconfig"
 
 cd "$repo_dir"
-cargo build -p fuse-promise-ffi --locked "${cargo_profile_args[@]}"
+FUSE_PROMISE_SONAME_MAJOR="$soname_major" \
+    cargo build -p fuse-promise-ffi --locked "${cargo_profile_args[@]}"
 
 cp include/fuse-promise/fuse-promise.h "$prefix/include/fuse-promise/fuse-promise.h"
-cp "$artifact_dir/libfusepromise.so" "$prefix/lib/libfusepromise.so.0"
-ln -sfn libfusepromise.so.0 "$prefix/lib/libfusepromise.so"
-"$readelf_bin" -d "$prefix/lib/libfusepromise.so.0" \
-    | grep -q 'SONAME.*libfusepromise.so.0' \
-    || fail "shared library SONAME is not libfusepromise.so.0"
+cp "$artifact_dir/libfusepromise.so" "$prefix/lib/libfusepromise.so.$soname_major"
+ln -sfn "libfusepromise.so.$soname_major" "$prefix/lib/libfusepromise.so"
+"$readelf_bin" -d "$prefix/lib/libfusepromise.so.$soname_major" \
+    | grep -q "SONAME.*libfusepromise.so.$soname_major" \
+    || fail "shared library SONAME is not libfusepromise.so.$soname_major"
 
 version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
 [ -n "$version" ] || fail "could not read workspace version"

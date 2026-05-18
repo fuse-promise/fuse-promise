@@ -485,6 +485,7 @@ Acceptance:
 - [x] Provide developer-preview release notes.
 - [~] Prepare stable release notes.
 - [x] Document visible filesystem layout.
+- [x] Define first stable soname-major policy.
 - [~] Prepare first stable ABI release.
 
 Suggested verification:
