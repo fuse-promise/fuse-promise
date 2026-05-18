@@ -171,12 +171,7 @@ impl PromiseBuilder {
         attr: NodeAttr,
         provider_node_id: &str,
     ) -> Result<()> {
-        self.add_node(
-            relative_path,
-            attr,
-            provider_node_id,
-            NodeKind::Directory,
-        )
+        self.add_node(relative_path, attr, provider_node_id, NodeKind::Directory)
     }
 
     pub fn add_file(
@@ -412,9 +407,18 @@ mod tests {
 
     #[test]
     fn rejects_unsafe_paths() {
-        assert_eq!(normalize_relative_path("/a").unwrap_err(), Status::InvalidArgument);
-        assert_eq!(normalize_relative_path("../a").unwrap_err(), Status::InvalidArgument);
-        assert_eq!(normalize_relative_path("a/../b").unwrap_err(), Status::InvalidArgument);
+        assert_eq!(
+            normalize_relative_path("/a").unwrap_err(),
+            Status::InvalidArgument
+        );
+        assert_eq!(
+            normalize_relative_path("../a").unwrap_err(),
+            Status::InvalidArgument
+        );
+        assert_eq!(
+            normalize_relative_path("a/../b").unwrap_err(),
+            Status::InvalidArgument
+        );
     }
 
     #[test]

@@ -205,8 +205,11 @@ pub unsafe extern "C" fn fp_provider_unregister(provider: *mut fp_provider) {
     }
 
     let provider = Box::from_raw(provider);
-    if let Ok(mut runtime) = provider.inner.runtime.lock() {
-        runtime.unregister_provider(provider.id);
+    {
+        let inner = provider.inner.clone();
+        if let Ok(mut runtime) = inner.runtime.lock() {
+            runtime.unregister_provider(provider.id);
+        };
     }
 }
 
@@ -256,10 +259,7 @@ pub unsafe extern "C" fn fp_promise_add_dir(
         let provider_node_id = cstr_to_str(provider_node_id)?;
         let attr = node_attr(attr)?;
 
-        let mut guard = builder
-            .builder
-            .lock()
-            .map_err(|_| FP_ERR_IO)?;
+        let mut guard = builder.builder.lock().map_err(|_| FP_ERR_IO)?;
         let Some(inner_builder) = guard.as_mut() else {
             return Err(FP_ERR_INVALID_ARGUMENT);
         };
@@ -284,10 +284,7 @@ pub unsafe extern "C" fn fp_promise_add_file(
         let provider_node_id = cstr_to_str(provider_node_id)?;
         let attr = node_attr(attr)?;
 
-        let mut guard = builder
-            .builder
-            .lock()
-            .map_err(|_| FP_ERR_IO)?;
+        let mut guard = builder.builder.lock().map_err(|_| FP_ERR_IO)?;
         let Some(inner_builder) = guard.as_mut() else {
             return Err(FP_ERR_INVALID_ARGUMENT);
         };
@@ -312,12 +309,7 @@ pub unsafe extern "C" fn fp_promise_commit(
         }
         *out_path = 0;
 
-        if builder
-            .builder
-            .lock()
-            .map_err(|_| FP_ERR_IO)?
-            .is_none()
-        {
+        if builder.builder.lock().map_err(|_| FP_ERR_IO)?.is_none() {
             return Err(FP_ERR_INVALID_ARGUMENT);
         }
 
@@ -370,7 +362,7 @@ unsafe fn runtime_dir_from_options(
         return default_mount_path().map_err(status_to_ffi);
     }
 
-    if (*options).struct_size as usize < required_context_options_size() {
+    if ((*options).struct_size as usize) < required_context_options_size() {
         return Err(FP_ERR_INVALID_ARGUMENT);
     }
     if (*options).api_version != API_VERSION {
@@ -402,20 +394,18 @@ unsafe fn node_attr(attr: *const fp_node_attr_t) -> Result<NodeAttr, fp_status_t
         return Err(FP_ERR_INVALID_ARGUMENT);
     }
 
-    if (*attr).struct_size as usize < required_node_attr_size() {
+    if ((*attr).struct_size as usize) < required_node_attr_size() {
         return Err(FP_ERR_INVALID_ARGUMENT);
     }
     let attr = &*attr;
     Ok(NodeAttr::new(attr.mode, attr.size, attr.mtime_nsec))
 }
 
-unsafe fn materialize_options(
-    options: *const fp_materialize_options_t,
-) -> Result<(), fp_status_t> {
+unsafe fn materialize_options(options: *const fp_materialize_options_t) -> Result<(), fp_status_t> {
     if options.is_null() {
         return Ok(());
     }
-    if (*options).struct_size as usize < required_materialize_options_size() {
+    if ((*options).struct_size as usize) < required_materialize_options_size() {
         return Err(FP_ERR_INVALID_ARGUMENT);
     }
     match (*options).conflict_policy {
@@ -439,15 +429,11 @@ fn lock_runtime(inner: &ContextInner) -> Result<std::sync::MutexGuard<'_, Runtim
 }
 
 fn required_context_options_size() -> usize {
-    struct_field_end::<fp_context_options_t, *const c_char>(
-        2 * std::mem::size_of::<u32>(),
-    )
+    struct_field_end::<fp_context_options_t, *const c_char>(2 * std::mem::size_of::<u32>())
 }
 
 fn required_provider_ops_size() -> usize {
-    struct_field_end::<fp_provider_ops_t, fp_provider_read_fn>(
-        std::mem::size_of::<u32>(),
-    )
+    struct_field_end::<fp_provider_ops_t, fp_provider_read_fn>(std::mem::size_of::<u32>())
 }
 
 fn required_node_attr_size() -> usize {
