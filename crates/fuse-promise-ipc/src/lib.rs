@@ -6,7 +6,9 @@ use fuse_promise_runtime::{
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{
+    DirBuilderExt, FileExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt,
+};
 use std::os::unix::net::UnixListener;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -1720,25 +1722,11 @@ fn write_materialized_file(
     let mut offset = 0;
     while offset < entry.size {
         let length = (entry.size - offset).min(u64::from(MAX_PROVIDER_READ_LEN)) as u32;
-        let request =
-            plan_materialize_read(state, promise_id, entry, offset, length).map_err(|status| {
+        let bytes =
+            read_materialize_chunk(state, promise_id, entry, offset, length).map_err(|status| {
                 MaterializeWriteError::with_created_target(status, target_identity, offset)
             })?;
-        let response = state.route_provider_read(request).map_err(|error| {
-            MaterializeWriteError::with_created_target(
-                io_error_to_status(&error),
-                target_identity,
-                offset,
-            )
-        })?;
-        if response.status != ProviderReadStatus::Ok {
-            return Err(MaterializeWriteError::with_created_target(
-                provider_read_status_to_status(response.status),
-                target_identity,
-                offset,
-            ));
-        }
-        if response.bytes.is_empty() {
+        if bytes.is_empty() {
             return Err(MaterializeWriteError::with_created_target(
                 Status::Io,
                 target_identity,
@@ -1746,22 +1734,20 @@ fn write_materialized_file(
             ));
         }
 
-        file.write_all(&response.bytes).map_err(|error| {
+        file.write_all(&bytes).map_err(|error| {
             MaterializeWriteError::with_created_target(
                 io_error_to_status(&error),
                 target_identity,
                 offset,
             )
         })?;
-        offset = offset
-            .checked_add(response.bytes.len() as u64)
-            .ok_or_else(|| {
-                MaterializeWriteError::with_created_target(
-                    Status::InvalidArgument,
-                    target_identity,
-                    offset,
-                )
-            })?;
+        offset = offset.checked_add(bytes.len() as u64).ok_or_else(|| {
+            MaterializeWriteError::with_created_target(
+                Status::InvalidArgument,
+                target_identity,
+                offset,
+            )
+        })?;
     }
 
     file.set_permissions(fs::Permissions::from_mode(entry.mode & 0o7777))
@@ -1782,27 +1768,59 @@ fn write_materialized_file(
     })
 }
 
-fn plan_materialize_read(
+fn read_materialize_chunk(
     state: &IpcState,
     promise_id: &str,
     entry: &MaterializeEntryPlan,
     offset: u64,
     length: u32,
-) -> std::result::Result<ProviderReadRequest, Status> {
-    let runtime = state.runtime.lock().map_err(|_| Status::Io)?;
-    let read_plan = runtime.plan_read(promise_id, &entry.relative_path, offset, length)?;
+) -> std::result::Result<Vec<u8>, Status> {
+    let read_plan = {
+        let runtime = state.runtime.lock().map_err(|_| Status::Io)?;
+        runtime.plan_read(promise_id, &entry.relative_path, offset, length)?
+    };
     match read_plan {
-        fuse_promise_runtime::ReadPlan::Request(plan) => Ok(ProviderReadRequest {
-            request_id: state.next_provider_read_request_id(),
-            provider_id: plan.provider_id.raw(),
-            promise_id: plan.promise_id,
-            relative_path: plan.relative_path,
-            provider_node_id: plan.provider_node_id,
-            offset: plan.offset,
-            length: plan.length,
-        }),
+        fuse_promise_runtime::ReadPlan::Request(plan) => {
+            let request = ProviderReadRequest {
+                request_id: state.next_provider_read_request_id(),
+                provider_id: plan.provider_id.raw(),
+                promise_id: plan.promise_id,
+                relative_path: plan.relative_path,
+                provider_node_id: plan.provider_node_id,
+                offset: plan.offset,
+                length: plan.length,
+            };
+            let response = state
+                .route_provider_read(request)
+                .map_err(|error| io_error_to_status(&error))?;
+            if response.status == ProviderReadStatus::Ok {
+                Ok(response.bytes)
+            } else {
+                Err(provider_read_status_to_status(response.status))
+            }
+        }
+        fuse_promise_runtime::ReadPlan::Materialized(plan) => {
+            read_local_materialized_chunk(&plan.path, plan.offset, plan.length)
+        }
         fuse_promise_runtime::ReadPlan::Eof => Err(Status::Io),
     }
+}
+
+fn read_local_materialized_chunk(
+    path: &Path,
+    offset: u64,
+    length: u32,
+) -> std::result::Result<Vec<u8>, Status> {
+    let file = fs::File::open(path).map_err(|error| io_error_to_status(&error))?;
+    let mut bytes = vec![0_u8; length as usize];
+    let read = file
+        .read_at(&mut bytes, offset)
+        .map_err(|error| io_error_to_status(&error))?;
+    if read != bytes.len() {
+        return Err(Status::Io);
+    }
+    bytes.truncate(read);
+    Ok(bytes)
 }
 
 fn apply_mtime(file: &fs::File, mtime_nsec: i64) -> std::result::Result<(), Status> {
@@ -3112,6 +3130,19 @@ mod tests {
         response.status = ProviderReadStatus::ProviderGone;
         response.bytes = b"bad".to_vec();
         assert!(write_provider_read_response(&mut Vec::new(), &response).is_err());
+    }
+
+    #[test]
+    fn materialized_chunk_reads_local_ranges_and_rejects_short_backing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_path = dir.path().join("readme.txt");
+        fs::write(&source_path, b"hello from fuse-promise\n").unwrap();
+
+        let bytes = read_local_materialized_chunk(&source_path, 6, 4).unwrap();
+        assert_eq!(bytes, b"from");
+
+        let error = read_local_materialized_chunk(&source_path, 20, 8).unwrap_err();
+        assert_eq!(error, Status::Io);
     }
 
     #[test]

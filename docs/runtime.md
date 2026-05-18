@@ -153,9 +153,10 @@ sockets. A provider connection closing marks its registered providers as
 disconnected and marks their available promises as provider-gone. Daemon-side
 provider read routing exists for the in-process IPC state. Real mounted FUSE
 read verification is covered by the smoke harness. File and directory subtree
-materialize IPC are implemented for fail-on-conflict behavior; overwrite and
-rename policies, progress, cancellation, and materialized-read passthrough are
-still under development.
+materialize IPC are implemented for fail-on-conflict behavior. Reads for
+materialized files can use the local materialized path after provider
+disconnect; overwrite and rename policies, progress, cancellation, and cache
+are still under development.
 
 `libfusepromise.so` provider registration uses this private daemon IPC and no
 longer creates authoritative provider sessions in a client-local runtime. Its
@@ -205,8 +206,10 @@ runtime and routes file reads back to registered providers. Private metadata
 commit uses this state as a readiness gate: disabled, unmounted, or mount-only
 daemons reject commit before mutating runtime state, while a commit-ready daemon
 state can return `$XDG_RUNTIME_DIR/fuse-promise/<promise-id>`.
-Promise file opens use FUSE direct I/O so the provider receives the caller's
+Promise file opens use FUSE direct I/O so provider reads receive the caller's
 actual offset-based read ranges instead of kernel page-cache readahead ranges.
+If a file has been fully materialized, the runtime plans reads against the
+stored local materialized path before requiring a live provider.
 
 Until a commit-ready FUSE namespace exists, public commit should return
 `FP_ERR_UNAVAILABLE`. Public materialize supports files and directory subtrees

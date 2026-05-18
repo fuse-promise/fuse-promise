@@ -348,7 +348,7 @@ Materialize implementation order:
 3. Conflict policies.
 4. Progress.
 5. Cancellation.
-6. Materialized-file read passthrough.
+6. Materialized-file read passthrough. Implemented.
 
 Use `std::fs` initially. Add specialized copy or async IO dependencies only if
 profiling shows a real need.
@@ -364,6 +364,8 @@ Later cache work must preserve visible Promise semantics:
   requested range is fully cached.
 - Complete materialized content may satisfy future reads.
 - Cache policy must be observable through `fpctl`.
+- The default remains no-cache: provider-gone reads succeed only for complete
+  materialized files until cache policy exists.
 
 Do not add cache dependencies until the no-cache read and materialize paths are
 correct.

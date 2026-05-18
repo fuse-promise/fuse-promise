@@ -43,6 +43,7 @@ daemon_log="$work_dir/daemon.log"
 provider_out="$work_dir/provider.out"
 provider_err="$work_dir/provider.err"
 provider_bin="$work_dir/read-only-mvp-provider"
+provider_lib_dir="$work_dir/lib"
 expected_file="$work_dir/expected.txt"
 expected_tree="$work_dir/expected-tree"
 copy_file="$work_dir/copied.txt"
@@ -69,6 +70,7 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -m 700 "$runtime_dir"
+mkdir "$provider_lib_dir"
 mkdir "$materialize_dir"
 mkdir -p "$expected_tree/docs/guides" "$expected_tree/docs/empty" "$materialize_tree_dir"
 printf 'hello from fuse-promise\n' > "$expected_file"
@@ -81,9 +83,11 @@ cargo build -p fuse-promise-ffi --locked
 cargo build -p fpctl --locked
 cargo build -p fuse-promise-daemon --features fuse-mount --locked
 
+ln -s "$repo_dir/target/debug/libfusepromise.so" "$provider_lib_dir/libfusepromise.so"
+ln -s "$repo_dir/target/debug/libfusepromise.so" "$provider_lib_dir/libfusepromise.so.0"
 cc -I"$repo_dir/include" "$repo_dir/tests/read_only_mvp_provider.c" \
-    -L"$repo_dir/target/debug" -lfusepromise \
-    "-Wl,-rpath,$repo_dir/target/debug" \
+    -L"$provider_lib_dir" -lfusepromise \
+    "-Wl,-rpath,$provider_lib_dir" \
     -o "$provider_bin"
 
 XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fuse-promised" \
@@ -99,7 +103,7 @@ for _ in $(seq 1 100); do
 done
 mountpoint -q "$mount_path" || fail "mount did not become ready"
 
-LD_LIBRARY_PATH="$repo_dir/target/debug${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+LD_LIBRARY_PATH="$provider_lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
     XDG_RUNTIME_DIR="$runtime_dir" "$provider_bin" "$read_log" \
     > "$provider_out" 2> "$provider_err" &
 provider_pid=$!
@@ -119,6 +123,7 @@ done
 file_path="$visible_path/docs/readme.txt"
 docs_path="$visible_path/docs"
 setup_path="$visible_path/docs/guides/setup.txt"
+pending_path="$visible_path/pending.txt"
 
 XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" status \
     | grep -q '^mount=mounted$' || fail "fpctl status did not report mounted"
@@ -131,10 +136,12 @@ grep -q '^d docs/empty$' "$work_dir/find.out" || fail "find did not see empty di
 grep -q '^d docs/guides$' "$work_dir/find.out" || fail "find did not see nested directory"
 grep -q '^f docs/readme.txt$' "$work_dir/find.out" || fail "find did not see promised file"
 grep -q '^f docs/guides/setup.txt$' "$work_dir/find.out" || fail "find did not see nested promised file"
+grep -q '^f pending.txt$' "$work_dir/find.out" || fail "find did not see unmaterialized promised file"
 ls -la "$visible_path" "$visible_path/docs" > "$work_dir/ls.out"
-stat -c '%F %s %a' "$visible_path" "$visible_path/docs" "$file_path" "$setup_path" > "$work_dir/stat.out"
+stat -c '%F %s %a' "$visible_path" "$visible_path/docs" "$file_path" "$setup_path" "$pending_path" > "$work_dir/stat.out"
 grep -q '^regular file 24 644$' "$work_dir/stat.out" || fail "stat did not report promised file metadata"
 grep -q '^regular file 12 644$' "$work_dir/stat.out" || fail "stat did not report nested promised file metadata"
+grep -q '^regular file 13 644$' "$work_dir/stat.out" || fail "stat did not report unmaterialized promised file metadata"
 
 if [ -s "$read_log" ]; then
     fail "metadata-only operations triggered provider reads"
@@ -200,8 +207,13 @@ done
 XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" list \
     | grep -q 'state=provider-gone' || fail "provider disconnect did not mark promise provider-gone"
 
-if cat "$file_path" > "$work_dir/after-disconnect.out" 2> "$work_dir/after-disconnect.err"; then
-    fail "read after provider disconnect unexpectedly succeeded"
+cat "$file_path" > "$work_dir/after-disconnect-materialized.out" \
+    || fail "materialized read after provider disconnect failed"
+cmp "$expected_file" "$work_dir/after-disconnect-materialized.out" >/dev/null \
+    || fail "materialized read after provider disconnect returned unexpected data"
+
+if cat "$pending_path" > "$work_dir/after-disconnect-unmaterialized.out" 2> "$work_dir/after-disconnect-unmaterialized.err"; then
+    fail "unmaterialized read after provider disconnect unexpectedly succeeded"
 fi
 
 echo "MVP smoke passed"

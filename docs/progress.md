@@ -406,7 +406,7 @@ semantics.
 - [ ] Track complete and incomplete byte ranges.
 - [ ] Add sequential prefetch.
 - [ ] Add read coalescing.
-- [ ] Add materialized-file passthrough.
+- [x] Add materialized-file passthrough.
 - [ ] Stress test large trees.
 - [ ] Stress test large files and random reads.
 
@@ -415,7 +415,8 @@ Acceptance:
 - Random reads do not require full-file download.
 - Large tree creation remains metadata-only.
 - Materialize streams data without holding whole files in memory.
-- Provider-gone reads succeed only for complete cached or materialized content.
+- Provider-gone reads succeed only for complete materialized content; cache
+  remains unimplemented.
 
 ## Phase 5: Stable System Component
 

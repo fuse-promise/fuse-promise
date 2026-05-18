@@ -136,6 +136,7 @@ pub struct PromiseTree {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadPlan {
     Request(ProviderReadPlan),
+    Materialized(MaterializedReadPlan),
     Eof,
 }
 
@@ -145,6 +146,13 @@ pub struct ProviderReadPlan {
     pub promise_id: String,
     pub relative_path: String,
     pub provider_node_id: String,
+    pub offset: u64,
+    pub length: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaterializedReadPlan {
+    pub path: PathBuf,
     pub offset: u64,
     pub length: u32,
 }
@@ -537,13 +545,6 @@ impl Runtime {
         length: u32,
     ) -> Result<ReadPlan> {
         let tree = self.promise(promise_id).ok_or(Status::NotFound)?;
-        if tree.state != PromiseState::Available {
-            return Err(Status::ProviderGone);
-        }
-        if !self.has_provider(tree.provider_id) {
-            return Err(Status::ProviderGone);
-        }
-
         let node = tree.get(relative_path).ok_or(Status::NotFound)?;
         if node.kind != NodeKind::File {
             return Err(Status::InvalidArgument);
@@ -557,6 +558,21 @@ impl Runtime {
         let length = u32::try_from(length).map_err(|_| Status::InvalidArgument)?;
         if offset.checked_add(u64::from(length)).is_none() {
             return Err(Status::InvalidArgument);
+        }
+
+        if let Some(path) = &node.materialized_path {
+            return Ok(ReadPlan::Materialized(MaterializedReadPlan {
+                path: PathBuf::from(path),
+                offset,
+                length,
+            }));
+        }
+
+        if tree.state != PromiseState::Available {
+            return Err(Status::ProviderGone);
+        }
+        if !self.has_provider(tree.provider_id) {
+            return Err(Status::ProviderGone);
         }
 
         Ok(ReadPlan::Request(ProviderReadPlan {
@@ -1079,6 +1095,29 @@ mod tests {
         assert_eq!(
             runtime.plan_read("promise-1", "docs/readme.txt", 0, 1),
             Err(Status::ProviderGone)
+        );
+    }
+
+    #[test]
+    fn materialized_file_read_planning_survives_provider_disconnect() {
+        let (mut runtime, _) = runtime_with_file();
+        let materialized_path = PathBuf::from("/tmp/fuse-promise-materialized/readme.txt");
+        runtime
+            .mark_node_materialized("promise-1", "docs/readme.txt", &materialized_path)
+            .unwrap();
+        runtime
+            .unregister_provider(ProviderId::from_raw(1).unwrap())
+            .unwrap();
+
+        assert_eq!(
+            runtime
+                .plan_read("promise-1", "docs/readme.txt", 4, 20)
+                .unwrap(),
+            ReadPlan::Materialized(MaterializedReadPlan {
+                path: materialized_path,
+                offset: 4,
+                length: 8,
+            })
         );
     }
 

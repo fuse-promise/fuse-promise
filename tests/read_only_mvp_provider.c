@@ -15,6 +15,7 @@ typedef struct file_data {
 static const file_data_t kFiles[] = {
     {"remote-file-1", "docs/readme.txt", "hello from fuse-promise\n"},
     {"remote-file-2", "docs/guides/setup.txt", "setup guide\n"},
+    {"remote-file-3", "pending.txt", "pending data\n"},
 };
 static volatile sig_atomic_t keep_running = 1;
 
@@ -148,6 +149,12 @@ int main(int argc, char **argv) {
                                  "remote-file-2");
     if (status != FP_OK) {
         fail("fp_promise_add_file nested", status);
+    }
+    file_attr.size = strlen(kFiles[2].data);
+    status = fp_promise_add_file(builder, "pending.txt", &file_attr,
+                                 "remote-file-3");
+    if (status != FP_OK) {
+        fail("fp_promise_add_file pending", status);
     }
 
     char path[4096];

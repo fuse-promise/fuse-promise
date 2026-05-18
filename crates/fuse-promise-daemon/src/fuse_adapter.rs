@@ -7,7 +7,11 @@ use fuse_promise_runtime::{
 };
 #[cfg(feature = "fuse-mount")]
 use std::ffi::OsStr;
+#[cfg(feature = "fuse-mount")]
+use std::fs;
 use std::io;
+#[cfg(feature = "fuse-mount")]
+use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "fuse-mount")]
@@ -24,6 +28,16 @@ pub struct FuseMount;
 #[cfg(feature = "fuse-mount")]
 struct PromiseFilesystem {
     state: IpcState,
+}
+
+#[cfg(feature = "fuse-mount")]
+enum FuseReadPlan {
+    Provider(ProviderReadRequest),
+    Materialized {
+        path: PathBuf,
+        offset: u64,
+        length: u32,
+    },
 }
 
 #[cfg(feature = "fuse-mount")]
@@ -160,24 +174,34 @@ impl fuser::Filesystem for PromiseFilesystem {
         reply: fuser::ReplyData,
     ) {
         let size = size.min(MAX_PROVIDER_READ_LEN);
-        let request = match self.plan_read(u64::from(ino), offset, size) {
+        let read_plan = match self.plan_read(u64::from(ino), offset, size) {
             Ok(None) => {
                 reply.data(&[]);
                 return;
             }
-            Ok(Some(request)) => request,
+            Ok(Some(read_plan)) => read_plan,
             Err(errno) => {
                 reply.error(errno);
                 return;
             }
         };
 
-        match self.state.route_provider_read(request) {
-            Ok(response) if response.status == ProviderReadStatus::Ok => {
-                reply.data(&response.bytes)
-            }
-            Ok(response) => reply.error(provider_status_to_errno(response.status)),
-            Err(error) => reply.error(io_error_to_errno(&error)),
+        match read_plan {
+            FuseReadPlan::Provider(request) => match self.state.route_provider_read(request) {
+                Ok(response) if response.status == ProviderReadStatus::Ok => {
+                    reply.data(&response.bytes)
+                }
+                Ok(response) => reply.error(provider_status_to_errno(response.status)),
+                Err(error) => reply.error(io_error_to_errno(&error)),
+            },
+            FuseReadPlan::Materialized {
+                path,
+                offset,
+                length,
+            } => match read_materialized_file(&path, offset, length) {
+                Ok(bytes) => reply.data(&bytes),
+                Err(errno) => reply.error(errno),
+            },
         }
     }
 
@@ -223,7 +247,7 @@ impl PromiseFilesystem {
         inode: u64,
         offset: u64,
         size: u32,
-    ) -> Result<Option<ProviderReadRequest>, fuser::Errno> {
+    ) -> Result<Option<FuseReadPlan>, fuser::Errno> {
         let runtime_state = self.state.runtime();
         let runtime = runtime_state.lock().map_err(|_| fuser::Errno::EIO)?;
         let RuntimeEntry::PromiseNode { promise_id, node } =
@@ -237,7 +261,7 @@ impl PromiseFilesystem {
 
         match read_plan {
             ReadPlan::Eof => Ok(None),
-            ReadPlan::Request(plan) => Ok(Some(ProviderReadRequest {
+            ReadPlan::Request(plan) => Ok(Some(FuseReadPlan::Provider(ProviderReadRequest {
                 request_id: self.state.next_provider_read_request_id(),
                 provider_id: plan.provider_id.raw(),
                 promise_id: plan.promise_id,
@@ -245,9 +269,28 @@ impl PromiseFilesystem {
                 provider_node_id: plan.provider_node_id,
                 offset: plan.offset,
                 length: plan.length,
+            }))),
+            ReadPlan::Materialized(plan) => Ok(Some(FuseReadPlan::Materialized {
+                path: plan.path,
+                offset: plan.offset,
+                length: plan.length,
             })),
         }
     }
+}
+
+#[cfg(feature = "fuse-mount")]
+fn read_materialized_file(path: &Path, offset: u64, length: u32) -> Result<Vec<u8>, fuser::Errno> {
+    let file = fs::File::open(path).map_err(|error| io_error_to_errno(&error))?;
+    let mut bytes = vec![0_u8; length as usize];
+    let read = file
+        .read_at(&mut bytes, offset)
+        .map_err(|error| io_error_to_errno(&error))?;
+    if read != bytes.len() {
+        return Err(fuser::Errno::EIO);
+    }
+    bytes.truncate(read);
+    Ok(bytes)
 }
 
 #[cfg(feature = "fuse-mount")]
