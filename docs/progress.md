@@ -31,6 +31,7 @@ plugins, or application-specific integrations.
 - [x] Private IPC can register and unregister daemon-owned provider sessions.
 - [x] Private IPC can commit metadata snapshots into the daemon-owned runtime.
 - [x] Private IPC has bounded provider read request/response message helpers.
+- [x] Private IPC propagates provider disconnect on provider connection close.
 - [x] `fpctl status` queries the daemon when connected and falls back to
   `daemon=not-connected` when disconnected.
 - [x] `fp_promise_commit()` and `fp_materialize()` return
@@ -125,8 +126,8 @@ Acceptance:
 - [x] Add provider register/unregister messages.
 - [x] Add Promise commit request/response messages.
 - [x] Add provider read request/response messages.
-- [ ] Add provider disconnect propagation.
-- [ ] Keep all IPC types private to internal crates.
+- [x] Add provider disconnect propagation.
+- [x] Keep all IPC types private to internal crates.
 
 Acceptance:
 

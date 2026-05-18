@@ -369,7 +369,9 @@ The current implementation includes bounded framed status, provider
 register/unregister, Promise metadata commit IPC, and provider read
 request/response message helpers over private Unix sockets. Read routing and
 materialize IPC are still Phase 1/Phase 2 work and must remain private to
-`libfusepromise.so` and `fuse-promised`.
+`libfusepromise.so` and `fuse-promised`. Registered providers are scoped to the
+IPC connection that registered them; closing that connection marks those
+providers disconnected in the daemon runtime.
 
 ## Failure Model
 

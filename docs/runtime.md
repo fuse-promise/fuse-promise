@@ -124,7 +124,9 @@ Minimum IPC operations:
 The current implementation provides runtime status, provider
 register/unregister messages, Promise metadata commit, and provider read
 request/response message helpers over a bounded framed protocol on private Unix
-sockets. Read routing and other IPC operations are still under development.
+sockets. A provider connection closing marks its registered providers as
+disconnected and marks their available promises as provider-gone. Read routing
+and other IPC operations are still under development.
 
 ## Lifecycle
 

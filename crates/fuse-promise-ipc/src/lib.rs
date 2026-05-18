@@ -11,6 +11,7 @@ use std::os::unix::net::UnixListener;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::thread;
 
 pub const IPC_PROTOCOL_VERSION: u32 = 1;
 pub const MAX_FRAME_LEN: u32 = 1024 * 1024;
@@ -201,6 +202,34 @@ pub struct ProviderRegistration {
     pub provider_id: u64,
 }
 
+#[derive(Debug)]
+pub struct ProviderConnection {
+    stream: UnixStream,
+    provider_id: u64,
+}
+
+impl ProviderConnection {
+    pub fn provider_id(&self) -> u64 {
+        self.provider_id
+    }
+
+    pub fn unregister(mut self) -> io::Result<()> {
+        write_frame(
+            &mut self.stream,
+            &Request::ProviderUnregister {
+                provider_id: self.provider_id,
+            },
+        )?;
+        match read_response(&mut self.stream)? {
+            Response::ProviderUnregistered => Ok(()),
+            Response::Error(error) => Err(error_to_io(error)),
+            _ => Err(invalid_data(
+                "daemon returned an unexpected provider unregister response",
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromiseCommitRequest {
     pub provider_id: u64,
@@ -277,11 +306,21 @@ pub fn query_status(socket_path: &Path) -> io::Result<String> {
 }
 
 pub fn register_provider(socket_path: &Path) -> io::Result<ProviderRegistration> {
+    let connection = connect_provider(socket_path)?;
+    Ok(ProviderRegistration {
+        provider_id: connection.provider_id(),
+    })
+}
+
+pub fn connect_provider(socket_path: &Path) -> io::Result<ProviderConnection> {
     let mut stream = connect_and_hello(socket_path)?;
 
     write_frame(&mut stream, &Request::ProviderRegister)?;
     match read_response(&mut stream)? {
-        Response::ProviderRegistered { provider_id } => Ok(ProviderRegistration { provider_id }),
+        Response::ProviderRegistered { provider_id } => Ok(ProviderConnection {
+            stream,
+            provider_id,
+        }),
         Response::Error(error) => Err(error_to_io(error)),
         _ => Err(invalid_data(
             "daemon returned an unexpected provider register response",
@@ -419,7 +458,12 @@ fn bind_status_socket(socket_path: &Path, runtime: Arc<Mutex<Runtime>>) -> io::R
     let listener = UnixListener::bind(socket_path)?;
     for stream in listener.incoming() {
         match stream {
-            Ok(stream) => handle_client(stream, &runtime)?,
+            Ok(stream) => {
+                let runtime = Arc::clone(&runtime);
+                thread::spawn(move || {
+                    let _ = handle_client(stream, &runtime);
+                });
+            }
             Err(error) => return Err(error),
         }
     }
@@ -430,8 +474,20 @@ fn bind_status_socket(socket_path: &Path, runtime: Arc<Mutex<Runtime>>) -> io::R
 fn handle_client(mut stream: UnixStream, runtime: &Arc<Mutex<Runtime>>) -> io::Result<()> {
     validate_peer(&stream)?;
 
+    let mut registered_providers = Vec::new();
+    let result = handle_client_requests(&mut stream, runtime, &mut registered_providers);
+    let disconnect_result = disconnect_registered_providers(runtime, &registered_providers);
+
+    result.and(disconnect_result)
+}
+
+fn handle_client_requests(
+    stream: &mut UnixStream,
+    runtime: &Arc<Mutex<Runtime>>,
+    registered_providers: &mut Vec<fuse_promise_runtime::ProviderId>,
+) -> io::Result<()> {
     let mut negotiated = false;
-    while let Some(request) = read_frame::<_, Request>(&mut stream)? {
+    while let Some(request) = read_frame::<_, Request>(stream)? {
         match request {
             Request::Hello {
                 protocol_version,
@@ -440,7 +496,7 @@ fn handle_client(mut stream: UnixStream, runtime: &Arc<Mutex<Runtime>>) -> io::R
                 if protocol_version == IPC_PROTOCOL_VERSION && api_version == API_VERSION {
                     negotiated = true;
                     write_frame(
-                        &mut stream,
+                        stream,
                         &Response::Hello {
                             protocol_version: IPC_PROTOCOL_VERSION,
                             api_version: API_VERSION,
@@ -448,7 +504,7 @@ fn handle_client(mut stream: UnixStream, runtime: &Arc<Mutex<Runtime>>) -> io::R
                     )?;
                 } else {
                     write_error(
-                        &mut stream,
+                        stream,
                         ErrorCode::VersionMismatch,
                         "unsupported IPC protocol or API version",
                     )?;
@@ -459,14 +515,11 @@ fn handle_client(mut stream: UnixStream, runtime: &Arc<Mutex<Runtime>>) -> io::R
                     .lock()
                     .map_err(|_| io::Error::other("runtime lock poisoned"))?;
                 let status = DaemonStatus::from_runtime(&runtime).map_err(status_to_io)?;
-                write_frame(
-                    &mut stream,
-                    &Response::Status(StatusBody::from_status(&status)),
-                )?;
+                write_frame(stream, &Response::Status(StatusBody::from_status(&status)))?;
             }
             Request::Status => {
                 write_error(
-                    &mut stream,
+                    stream,
                     ErrorCode::InvalidRequest,
                     "client must send hello before status",
                 )?;
@@ -475,12 +528,18 @@ fn handle_client(mut stream: UnixStream, runtime: &Arc<Mutex<Runtime>>) -> io::R
                 let mut runtime = runtime
                     .lock()
                     .map_err(|_| io::Error::other("runtime lock poisoned"))?;
-                let provider_id = runtime.register_provider().raw();
-                write_frame(&mut stream, &Response::ProviderRegistered { provider_id })?;
+                let provider_id = runtime.register_provider();
+                registered_providers.push(provider_id);
+                write_frame(
+                    stream,
+                    &Response::ProviderRegistered {
+                        provider_id: provider_id.raw(),
+                    },
+                )?;
             }
             Request::ProviderRegister => {
                 write_error(
-                    &mut stream,
+                    stream,
                     ErrorCode::InvalidRequest,
                     "client must send hello before provider register",
                 )?;
@@ -489,7 +548,7 @@ fn handle_client(mut stream: UnixStream, runtime: &Arc<Mutex<Runtime>>) -> io::R
                 let Some(provider_id) = fuse_promise_runtime::ProviderId::from_raw(provider_id)
                 else {
                     write_error(
-                        &mut stream,
+                        stream,
                         ErrorCode::InvalidRequest,
                         "provider id must be nonzero",
                     )?;
@@ -500,28 +559,49 @@ fn handle_client(mut stream: UnixStream, runtime: &Arc<Mutex<Runtime>>) -> io::R
                     .lock()
                     .map_err(|_| io::Error::other("runtime lock poisoned"))?;
                 match runtime.unregister_provider(provider_id) {
-                    Ok(()) => write_frame(&mut stream, &Response::ProviderUnregistered)?,
-                    Err(status) => write_status_error(&mut stream, status)?,
+                    Ok(()) => {
+                        registered_providers.retain(|id| *id != provider_id);
+                        write_frame(stream, &Response::ProviderUnregistered)?;
+                    }
+                    Err(status) => write_status_error(stream, status)?,
                 }
             }
             Request::ProviderUnregister { .. } => {
                 write_error(
-                    &mut stream,
+                    stream,
                     ErrorCode::InvalidRequest,
                     "client must send hello before provider unregister",
                 )?;
             }
             Request::PromiseCommit(request) if negotiated => {
-                handle_promise_commit(&mut stream, runtime, request)?;
+                handle_promise_commit(stream, runtime, request)?;
             }
             Request::PromiseCommit(_) => {
                 write_error(
-                    &mut stream,
+                    stream,
                     ErrorCode::InvalidRequest,
                     "client must send hello before promise commit",
                 )?;
             }
         }
+    }
+
+    Ok(())
+}
+
+fn disconnect_registered_providers(
+    runtime: &Arc<Mutex<Runtime>>,
+    provider_ids: &[fuse_promise_runtime::ProviderId],
+) -> io::Result<()> {
+    if provider_ids.is_empty() {
+        return Ok(());
+    }
+
+    let mut runtime = runtime
+        .lock()
+        .map_err(|_| io::Error::other("runtime lock poisoned"))?;
+    for provider_id in provider_ids {
+        let _ = runtime.unregister_provider(*provider_id);
     }
 
     Ok(())
@@ -932,7 +1012,7 @@ fn status_to_io(status: Status) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fuse_promise_runtime::ProviderState;
+    use fuse_promise_runtime::{PromiseState, ProviderState};
     use std::io::Cursor;
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1203,6 +1283,65 @@ mod tests {
     }
 
     #[test]
+    fn provider_connection_drop_marks_provider_disconnected() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let server_runtime = Arc::clone(&runtime);
+        let server_thread = thread::spawn(move || handle_client(server, &server_runtime));
+
+        send_hello(&mut client);
+        write_frame(&mut client, &Request::ProviderRegister).unwrap();
+        let provider_id = match read_frame(&mut client).unwrap().unwrap() {
+            Response::ProviderRegistered { provider_id } => provider_id,
+            other => panic!("unexpected response: {other:?}"),
+        };
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
+
+        let provider_id = fuse_promise_runtime::ProviderId::from_raw(provider_id).unwrap();
+        assert_eq!(
+            runtime.lock().unwrap().provider(provider_id).unwrap().state,
+            ProviderState::Disconnected
+        );
+    }
+
+    #[test]
+    fn provider_connection_drop_marks_owned_promises_provider_gone() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let runtime = Arc::new(Mutex::new(Runtime::new()));
+        let server_runtime = Arc::clone(&runtime);
+        let server_thread = thread::spawn(move || handle_client(server, &server_runtime));
+
+        send_hello(&mut client);
+        write_frame(&mut client, &Request::ProviderRegister).unwrap();
+        let provider_id = match read_frame(&mut client).unwrap().unwrap() {
+            Response::ProviderRegistered { provider_id } => provider_id,
+            other => panic!("unexpected response: {other:?}"),
+        };
+        write_frame(
+            &mut client,
+            &Request::PromiseCommit(sample_commit_request(provider_id).into_body()),
+        )
+        .unwrap();
+        let response: Response = read_frame(&mut client).unwrap().unwrap();
+        assert_eq!(
+            response,
+            Response::PromiseCommitted(PromiseCommittedBody {
+                promise_id: "promise-1".to_owned(),
+            })
+        );
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
+
+        assert_eq!(
+            runtime.lock().unwrap().promise("promise-1").unwrap().state,
+            PromiseState::ProviderGone
+        );
+    }
+
+    #[test]
     fn provider_helpers_use_unix_socket() {
         let socket_path = unique_socket_path();
         let listener = UnixListener::bind(&socket_path).unwrap();
@@ -1236,20 +1375,25 @@ mod tests {
         let runtime = Arc::new(Mutex::new(Runtime::new()));
         let server_runtime = Arc::clone(&runtime);
         let server_thread = thread::spawn(move || {
+            let mut children = Vec::new();
             for _ in 0..2 {
                 let (stream, _) = listener.accept().unwrap();
-                handle_client(stream, &server_runtime).unwrap();
+                let runtime = Arc::clone(&server_runtime);
+                children.push(thread::spawn(move || {
+                    handle_client(stream, &runtime).unwrap();
+                }));
+            }
+            for child in children {
+                child.join().unwrap();
             }
         });
 
-        let registration = register_provider(&socket_path).unwrap();
-        let response = commit_promise(
-            &socket_path,
-            sample_commit_request(registration.provider_id),
-        )
-        .unwrap();
+        let provider = connect_provider(&socket_path).unwrap();
+        let response =
+            commit_promise(&socket_path, sample_commit_request(provider.provider_id())).unwrap();
 
         assert_eq!(response.promise_id, "promise-1");
+        drop(provider);
         server_thread.join().unwrap();
         assert!(runtime
             .lock()

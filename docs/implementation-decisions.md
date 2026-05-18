@@ -175,6 +175,8 @@ Minimum message families:
 - `PromiseCommit`. Implemented as private daemon-owned metadata commit.
 - `ProviderReadRequest`. Implemented as bounded private message helpers.
 - `ProviderReadResponse`. Implemented as bounded private message helpers.
+- Provider disconnect propagation. Implemented for connection-scoped provider
+  registrations.
 - `MaterializeStart`.
 - `MaterializeCancel`.
 - `MaterializeStatus`.
