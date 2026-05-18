@@ -1,5 +1,11 @@
 # Roadmap
 
+For the detailed goal checklist with acceptance criteria, see
+[Progress Goals](progress.md).
+
+For fixed implementation dependency and sequencing decisions, see
+[Implementation Decisions](implementation-decisions.md).
+
 ## Phase 0: Specification
 
 - Define the Promise model.
@@ -9,6 +15,8 @@
 - Define read and materialize semantics.
 - Add initial source layout, public header, Rust runtime skeleton, C ABI entry
   points, daemon entry point, and `fpctl status`.
+- Fix the first implementation dependency set, crate ownership boundaries, and
+  framework build order before expanding runtime logic.
 - Keep pkg-config and systemd files as placeholders until an install/build
   system generates and installs them.
 

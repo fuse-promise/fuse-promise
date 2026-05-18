@@ -117,12 +117,14 @@ Those projects should live outside this repository and use the public API.
 - [Project Statement](docs/project-statement.md)
 - [Requirements](docs/requirements.md)
 - [Architecture](docs/architecture.md)
+- [Implementation Decisions](docs/implementation-decisions.md)
 - [Language and ABI](docs/language-and-abi.md)
 - [Promise Model](docs/promise-model.md)
 - [Public API](docs/public-api.md)
 - [Runtime](docs/runtime.md)
 - [Development Style](docs/development-style.md)
 - [Roadmap](docs/roadmap.md)
+- [Progress Goals](docs/progress.md)
 
 ## Source Layout
 
