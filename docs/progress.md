@@ -487,7 +487,7 @@ Acceptance:
 - [x] Document visible filesystem layout.
 - [x] Define first stable soname-major policy.
 - [x] Add a repeatable stable release gate script.
-- [~] Prepare first stable ABI release.
+- [x] Prepare first stable ABI release.
 
 Suggested verification:
 

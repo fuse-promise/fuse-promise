@@ -5,6 +5,14 @@ stable public ABI release. The private Rust crates and daemon IPC remain
 internal implementation details; the stable surface is the installed C ABI and
 observable filesystem behavior.
 
+## Release Record
+
+- Version: `1.0.0`
+- Date: 2026-05-18
+- Tag: `v1.0.0`
+- Soname: `libfusepromise.so.1`
+- Gate: `tests/stable-release-gates.sh`
+
 ## Stable Surface
 
 The stable release candidate must freeze:
@@ -44,15 +52,8 @@ The FUSE gates require libfuse3 development metadata, `/dev/fuse`, and
 
 ## Release Blockers
 
-The first stable ABI release remains blocked until these are resolved:
-
-- Re-run ABI hardening against the exact release build artifact with
-  `BUILD_PROFILE=release SONAME_MAJOR=1 tests/abi-hardening.sh`.
-- Run the full stable release gate with `tests/stable-release-gates.sh`.
-- Set the final stable release version and date in the changelog and stable
-  release notes.
-- Tag the release only after the installed header, pkg-config metadata, soname,
-  CLI behavior, release notes, and smoke gates match this document.
+No open blockers remain for `1.0.0` after `tests/stable-release-gates.sh`
+passes on the release commit.
 
 ## Stable Candidate Decisions
 
@@ -67,7 +68,5 @@ The first stable ABI release remains blocked until these are resolved:
 
 ## Versioning Rule
 
-Until this checklist is complete, `0.1.0` remains a developer-preview release.
-Its developer-preview notes live in `docs/release-notes-0.1.0.md`.
-The stable release notes draft lives in `docs/release-notes-stable.md`; set the
-final stable release version and date only after the gate passes.
+The `1.0.0` stable release notes live in `docs/release-notes-stable.md`.
+The earlier developer-preview notes live in `docs/release-notes-0.1.0.md`.

@@ -1,8 +1,10 @@
-# Stable ABI Release Notes Draft
+# Release Notes: 1.0.0 Stable ABI
 
-These notes define the first stable ABI release candidate. The final version
-and date are set only after every gate in `docs/stable-abi-release.md` passes
-against the exact release artifact.
+Released 2026-05-18.
+
+This is the first stable C ABI release. The private Rust crates and daemon IPC
+remain internal implementation details; the stable surface is the installed C
+ABI and observable filesystem behavior.
 
 ## Stable Commitments
 

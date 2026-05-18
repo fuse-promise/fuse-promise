@@ -8,8 +8,8 @@ The project is a system component. It is not a clipboard application, a cloud cl
 
 ## Status
 
-This repository has implemented the read-only Promise filesystem MVP and the
-current developer-preview materialize/cache path.
+This repository has implemented the read-only Promise filesystem MVP, the
+materialize/cache path, and the first stable C ABI release surface.
 
 The current tree contains the public C header, Rust workspace skeleton, core
 Promise metadata model, C ABI entry points, initial daemon and CLI entry
@@ -157,8 +157,8 @@ Those projects should live outside this repository and use the public API.
 - [Security](docs/security.md)
 - [Packaging](docs/packaging.md)
 - [Stable ABI Release Readiness](docs/stable-abi-release.md)
+- [1.0.0 Stable ABI Release Notes](docs/release-notes-stable.md)
 - [0.1.0 Developer Preview Release Notes](docs/release-notes-0.1.0.md)
-- [Stable ABI Release Notes Draft](docs/release-notes-stable.md)
 - [Development Style](docs/development-style.md)
 - [Roadmap](docs/roadmap.md)
 - [Progress Goals](docs/progress.md)

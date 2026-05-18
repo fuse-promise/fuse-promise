@@ -101,8 +101,7 @@ deterministically with `FP_ERR_PROVIDER_GONE` through the public C ABI and
 
 ## API Sketch
 
-This API is the current developer-preview surface. It is tested as an ABI, but
-it is not declared stable until the first stable ABI release gate is complete.
+This API is the stable C ABI for the `1.0.0` release.
 
 ```c
 typedef struct fp_context_options {

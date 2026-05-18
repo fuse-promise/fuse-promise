@@ -1,11 +1,11 @@
 # Changelog
 
-## 0.1.0 - Unreleased
+## 1.0.0 - 2026-05-18
 
-Initial developer release scope:
+First stable ABI release:
 
 - Public C ABI in `fuse-promise/fuse-promise.h`.
-- `libfusepromise.so` with `libfusepromise.so.0` soname policy.
+- `libfusepromise.so` with `libfusepromise.so.1` soname policy.
 - Private Unix socket IPC between public clients and `fuse-promised`.
 - User-session FUSE mount under `$XDG_RUNTIME_DIR/fuse-promise/`.
 - Provider registration, metadata commit, lazy read routing, and provider-gone
@@ -20,5 +20,4 @@ Initial developer release scope:
 
 Not included in this release:
 
-- Stable ABI guarantee.
 - Network, cloud-provider, P2P, clipboard, or desktop integration logic.

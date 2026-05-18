@@ -79,9 +79,9 @@ $XDG_RUNTIME_DIR/fuse-promise/promise-1/docs/readme.txt
 ```
 
 The daemon owns inode assignment and keeps inode values stable for the lifetime
-of the committed in-memory tree. The developer-preview layout should not be
-treated as a stable ABI until the first developer ABI release documents it in
-the public API and compatibility tests.
+of the committed in-memory tree. The visible layout under
+`$XDG_RUNTIME_DIR/fuse-promise/<promise-id>` is part of the stable filesystem
+compatibility contract for the `1.0.0` release.
 
 ## Daemon Responsibilities
 
