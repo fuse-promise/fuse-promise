@@ -39,12 +39,11 @@ plugins, or application-specific integrations.
   public C read callback.
 - [x] Runtime read planning enforces provider ownership, file node type,
   provider-gone state, and EOF capping.
-- [~] FUSE mount lifecycle is wired behind the daemon `fuse-mount` feature;
-  the current environment still lacks `pkg-config` / libfuse3 development
-  metadata for enabled-feature verification.
+- [x] FUSE mount lifecycle is wired behind the daemon `fuse-mount` feature and
+  has been verified with libfuse3 development metadata available.
 - [~] Feature-gated read-only FUSE callbacks are wired to runtime lookup,
-  directory, and provider read routing; real mount verification remains blocked
-  by the missing libfuse3 development metadata.
+  directory, and provider read routing; mounted committed-tree verification
+  remains pending.
 - [x] Runtime rejects missing, relative, non-directory, foreign-owned, or
   group/other-accessible `XDG_RUNTIME_DIR` paths.
 - [x] `fpctl status` queries the daemon when connected and falls back to
@@ -107,8 +106,8 @@ pass and one pushable commit.
 |---|---:|---|---|---|
 | [x] | 1 | Freeze MVP visible layout | Runtime, FUSE adapter, CLI docs, and tests. | The root directory and `$XDG_RUNTIME_DIR/fuse-promise/<promise-id>` layout are documented before more FUSE behavior depends on it. |
 | [x] | 2 | Finish G1.4 public commit success path | FFI test coverage over a daemon commit-ready state; no public ABI change. | `fp_promise_commit()` returns `FP_OK`, writes `$XDG_RUNTIME_DIR/fuse-promise/promise-1`, and consumes the builder only on success. |
-| [ ] | 3 | Verify G1.5 feature build gate | Environment and daemon feature build; no fallback to unsafe paths. | `pkg-config --exists fuse3` and `cargo check -p fuse-promise-daemon --features fuse-mount --locked` pass without stubs. |
-| [ ] | 4 | Verify G1.5 real mount lifecycle | Feature daemon runtime with shared `XDG_RUNTIME_DIR`. | `mountpoint -q "$XDG_RUNTIME_DIR/fuse-promise"` succeeds, `fpctl status` reports mounted state, and daemon shutdown unmounts cleanly. |
+| [x] | 3 | Verify G1.5 feature build gate | Environment and daemon feature build; no fallback to unsafe paths. | `pkg-config --exists fuse3` and `cargo check -p fuse-promise-daemon --features fuse-mount --locked` pass without stubs. |
+| [x] | 4 | Verify G1.5 real mount lifecycle | Feature daemon runtime with shared `XDG_RUNTIME_DIR`. | `mountpoint -q "$XDG_RUNTIME_DIR/fuse-promise"` succeeds, `fpctl status` reports mounted state, and daemon shutdown unmounts cleanly. |
 | [ ] | 5 | Close G1.6 metadata-only FUSE ops | Feature-gated `lookup`, `getattr`, and `readdir` over daemon runtime. | `stat`, `ls`, and `find` work against a committed tree without provider read requests. |
 | [ ] | 6 | Close G1.6 FUSE read routing | Feature-gated `open`, offset `read`, `release`, and errno mapping. | `cat` and offset `dd` request only needed byte ranges and provider errors map deterministically. |
 | [ ] | 7 | Close G1.7 read-only MVP gate | End-to-end provider, commit, mount, inspect, lazy read, and disconnect behavior. | A provider-created tree is visible, metadata reads transfer no bytes, file reads route only requested ranges, and disconnect errors are deterministic. |
@@ -232,10 +231,10 @@ Acceptance:
 ### G1.5 User-Session FUSE Mount
 
 - [x] Pick and document the internal FUSE backend.
-- [~] Mount `$XDG_RUNTIME_DIR/fuse-promise/`.
+- [x] Mount `$XDG_RUNTIME_DIR/fuse-promise/`.
 - [x] Fail explicitly if `XDG_RUNTIME_DIR` is missing, not absolute, unsafe, or
   not owned by the current user.
-- [~] Cleanly unmount on daemon exit.
+- [x] Cleanly unmount on daemon exit.
 - [x] Keep mount lifecycle user-session scoped.
 
 Acceptance:
