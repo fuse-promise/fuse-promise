@@ -45,6 +45,7 @@ provider_err="$work_dir/provider.err"
 provider_bin="$work_dir/read-only-mvp-provider"
 provider_lib_dir="$work_dir/lib"
 expected_file="$work_dir/expected.txt"
+expected_stream="$work_dir/expected-stream.txt"
 daemon_pid=
 provider_pid=
 
@@ -68,6 +69,7 @@ trap cleanup EXIT
 mkdir -m 700 "$runtime_dir"
 mkdir "$provider_lib_dir"
 printf 'hello from fuse-promise\n' > "$expected_file"
+printf 'abcdefghijklmnopqrstuvwxyz0123456789\n' > "$expected_stream"
 : > "$read_log"
 
 cd "$repo_dir"
@@ -111,7 +113,7 @@ for _ in $(seq 1 100); do
 done
 [ -n "$visible_path" ] || fail "provider did not print visible path"
 
-cached_path="$visible_path/docs/readme.txt"
+cached_path="$visible_path/stream.txt"
 uncached_path="$visible_path/pending.txt"
 
 XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" status \
@@ -121,20 +123,19 @@ grep -q '^mount=mounted$' "$work_dir/status.out" \
 grep -q '^cache_policy=read-through$' "$work_dir/status.out" \
     || fail "fpctl status did not report read-through policy"
 
-cat "$cached_path" > "$work_dir/first-read.out" \
-    || fail "first cached-path read failed"
-cmp "$expected_file" "$work_dir/first-read.out" >/dev/null \
-    || fail "first cached-path read returned unexpected data"
+first_chunk=$(dd if="$cached_path" bs=1 count=4 status=none)
+[ "$first_chunk" = "abcd" ] || fail "first sequential read returned unexpected data: $first_chunk"
 read_count=$(wc -l < "$read_log")
-[ "$read_count" -gt 0 ] || fail "first read did not reach provider"
+[ "$read_count" -ge 2 ] || fail "first read did not trigger sequential prefetch"
+grep -Eq '^READ offset=[1-9][0-9]* ' "$read_log" \
+    || fail "sequential prefetch did not request the next range"
 
-cat "$cached_path" > "$work_dir/second-read.out" \
-    || fail "second cached-path read failed"
-cmp "$expected_file" "$work_dir/second-read.out" >/dev/null \
-    || fail "second cached-path read returned unexpected data"
+second_chunk=$(dd if="$cached_path" bs=1 skip=4 count=8 status=none)
+[ "$second_chunk" = "efghijkl" ] \
+    || fail "second sequential read returned unexpected data: $second_chunk"
 second_read_count=$(wc -l < "$read_log")
 [ "$second_read_count" = "$read_count" ] \
-    || fail "cache hit still reached provider"
+    || fail "prefetched cache hit still reached provider"
 
 kill "$provider_pid"
 wait "$provider_pid" || true
@@ -152,7 +153,7 @@ XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" list \
 
 cat "$cached_path" > "$work_dir/after-disconnect-cached.out" \
     || fail "cached read after provider disconnect failed"
-cmp "$expected_file" "$work_dir/after-disconnect-cached.out" >/dev/null \
+cmp "$expected_stream" "$work_dir/after-disconnect-cached.out" >/dev/null \
     || fail "cached read after provider disconnect returned unexpected data"
 
 if cat "$uncached_path" > "$work_dir/after-disconnect-uncached.out" 2> "$work_dir/after-disconnect-uncached.err"; then

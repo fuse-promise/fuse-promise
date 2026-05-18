@@ -153,7 +153,8 @@ Possible cache modes:
 - No cache. This is the current default and is reported as
   `cache_policy=no-cache` by `fpctl status`.
 - Read-through chunk cache. This is opt-in with `fuse-promised
-  --cache=read-through` and stores complete read ranges in memory.
+  --cache=read-through`, stores complete read ranges in memory, and prefetches
+  the next sequential range after full provider reads.
 - Materialized-file passthrough.
 - Provider-defined cache policy.
 

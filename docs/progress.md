@@ -405,7 +405,7 @@ semantics.
 - [x] Keep default no-cache behavior explicit.
 - [x] Add optional read-through chunk cache.
 - [x] Track complete and incomplete byte ranges.
-- [ ] Add sequential prefetch.
+- [x] Add sequential prefetch.
 - [ ] Add read coalescing.
 - [x] Add materialized-file passthrough.
 - [ ] Stress test large trees.
@@ -421,6 +421,8 @@ Acceptance:
   with `--cache=read-through`.
 - Provider-gone reads succeed only for complete materialized content or complete
   cached ranges in read-through mode.
+- Read-through mode prefetches the next sequential range after full provider
+  reads.
 
 ## Phase 5: Stable System Component
 

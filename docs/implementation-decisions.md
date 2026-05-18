@@ -358,7 +358,9 @@ profiling shows a real need.
 The first read-only MVP default is no-cache. This is an explicit runtime
 `CachePolicy::NoCache` value and is observable as `cache_policy=no-cache`
 through `fpctl status`. The daemon can opt into an in-memory read-through cache
-with `--cache=read-through`; this does not add a public C ABI option.
+with `--cache=read-through`; this does not add a public C ABI option. In this
+mode, the daemon performs synchronous one-range sequential prefetch after a
+full provider read.
 
 Later cache work must preserve visible Promise semantics:
 
@@ -374,6 +376,8 @@ Later cache work must preserve visible Promise semantics:
   range.
 - Materialize may consume cached ranges through the normal read planner but
   does not actively populate the read-through cache.
+- Prefetch is an internal daemon optimization and must not change the default
+  no-cache provider read ranges.
 
 Do not add cache dependencies until the no-cache read and materialize paths are
 correct.

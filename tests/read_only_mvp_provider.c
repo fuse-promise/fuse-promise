@@ -16,6 +16,8 @@ static const file_data_t kFiles[] = {
     {"remote-file-1", "docs/readme.txt", "hello from fuse-promise\n"},
     {"remote-file-2", "docs/guides/setup.txt", "setup guide\n"},
     {"remote-file-3", "pending.txt", "pending data\n"},
+    {"remote-file-4", "stream.txt",
+     "abcdefghijklmnopqrstuvwxyz0123456789\n"},
 };
 static volatile sig_atomic_t keep_running = 1;
 
@@ -155,6 +157,12 @@ int main(int argc, char **argv) {
                                  "remote-file-3");
     if (status != FP_OK) {
         fail("fp_promise_add_file pending", status);
+    }
+    file_attr.size = strlen(kFiles[3].data);
+    status = fp_promise_add_file(builder, "stream.txt", &file_attr,
+                                 "remote-file-4");
+    if (status != FP_OK) {
+        fail("fp_promise_add_file stream", status);
     }
 
     char path[4096];

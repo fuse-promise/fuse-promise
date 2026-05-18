@@ -674,6 +674,68 @@ impl Runtime {
         Ok(())
     }
 
+    pub fn plan_sequential_prefetch(
+        &self,
+        promise_id: &str,
+        relative_path: &str,
+        completed_offset: u64,
+        completed_length: u32,
+    ) -> Result<Option<ProviderReadPlan>> {
+        let Some(chunk_size) = self.cache_policy.chunk_size() else {
+            return Ok(None);
+        };
+        if completed_length == 0 {
+            return Ok(None);
+        }
+
+        let tree = self.promise(promise_id).ok_or(Status::NotFound)?;
+        let node = tree.get(relative_path).ok_or(Status::NotFound)?;
+        if node.kind != NodeKind::File {
+            return Err(Status::InvalidArgument);
+        }
+        if node.materialized_path.is_some() {
+            return Ok(None);
+        }
+        if tree.state != PromiseState::Available {
+            return Err(Status::ProviderGone);
+        }
+        if !self.has_provider(tree.provider_id) {
+            return Err(Status::ProviderGone);
+        }
+
+        let offset = completed_offset
+            .checked_add(u64::from(completed_length))
+            .ok_or(Status::InvalidArgument)?;
+        if offset >= node.attr.size {
+            return Ok(None);
+        }
+        let remaining = node.attr.size - offset;
+        let length = u64::from(chunk_size).min(remaining);
+        let length = u32::try_from(length).map_err(|_| Status::InvalidArgument)?;
+        if self
+            .read_cache
+            .read(
+                promise_id,
+                &node.relative_path,
+                offset,
+                u64::from(length),
+                chunk_size,
+            )
+            .is_some()
+        {
+            return Ok(None);
+        }
+
+        Ok(Some(ProviderReadPlan {
+            provider_id: tree.provider_id,
+            promise_id: tree.promise_id.clone(),
+            relative_path: node.relative_path.clone(),
+            provider_node_id: node.provider_node_id.clone(),
+            offset,
+            length,
+        }))
+    }
+
     pub fn register_provider(&mut self) -> ProviderId {
         let provider_id = ProviderId(self.next_provider_id);
         self.next_provider_id += 1;
@@ -1458,6 +1520,43 @@ mod tests {
         assert_eq!(
             runtime.plan_read("promise-1", "docs/readme.txt", 1, 4),
             Err(Status::ProviderGone)
+        );
+    }
+
+    #[test]
+    fn sequential_prefetch_plans_next_uncached_range() {
+        let (mut runtime, provider) = runtime_with_file();
+        runtime
+            .set_cache_policy(CachePolicy::read_through(4).unwrap())
+            .unwrap();
+
+        assert_eq!(
+            runtime
+                .plan_sequential_prefetch("promise-1", "docs/readme.txt", 0, 4)
+                .unwrap(),
+            Some(ProviderReadPlan {
+                provider_id: provider,
+                promise_id: "promise-1".to_owned(),
+                relative_path: "docs/readme.txt".to_owned(),
+                provider_node_id: "remote-file-1".to_owned(),
+                offset: 4,
+                length: 4,
+            })
+        );
+        runtime
+            .record_cached_read("promise-1", "docs/readme.txt", 4, b"efgh")
+            .unwrap();
+        assert_eq!(
+            runtime
+                .plan_sequential_prefetch("promise-1", "docs/readme.txt", 0, 4)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            runtime
+                .plan_sequential_prefetch("promise-1", "docs/readme.txt", 8, 4)
+                .unwrap(),
+            None
         );
     }
 

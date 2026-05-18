@@ -192,7 +192,10 @@ impl fuser::Filesystem for PromiseFilesystem {
                 match self.state.route_provider_read(request.clone()) {
                     Ok(response) if response.status == ProviderReadStatus::Ok => {
                         match self.record_cached_read(&request, &response.bytes) {
-                            Ok(()) => reply.data(&response.bytes),
+                            Ok(()) => {
+                                self.prefetch_after_provider_read(&request, response.bytes.len());
+                                reply.data(&response.bytes)
+                            }
                             Err(errno) => reply.error(errno),
                         }
                     }
@@ -301,6 +304,47 @@ impl PromiseFilesystem {
                 bytes,
             )
             .map_err(status_to_errno)
+    }
+
+    fn prefetch_after_provider_read(&self, request: &ProviderReadRequest, bytes_read: usize) {
+        if bytes_read != request.length as usize {
+            return;
+        }
+        let Ok(bytes_read) = u32::try_from(bytes_read) else {
+            return;
+        };
+
+        let prefetch_plan = {
+            let runtime_state = self.state.runtime();
+            let Ok(runtime) = runtime_state.lock() else {
+                return;
+            };
+            runtime.plan_sequential_prefetch(
+                &request.promise_id,
+                &request.relative_path,
+                request.offset,
+                bytes_read,
+            )
+        };
+        let Ok(Some(plan)) = prefetch_plan else {
+            return;
+        };
+
+        let prefetch_request = ProviderReadRequest {
+            request_id: self.state.next_provider_read_request_id(),
+            provider_id: plan.provider_id.raw(),
+            promise_id: plan.promise_id,
+            relative_path: plan.relative_path,
+            provider_node_id: plan.provider_node_id,
+            offset: plan.offset,
+            length: plan.length,
+        };
+        let Ok(response) = self.state.route_provider_read(prefetch_request.clone()) else {
+            return;
+        };
+        if response.status == ProviderReadStatus::Ok {
+            let _ = self.record_cached_read(&prefetch_request, &response.bytes);
+        }
     }
 }
 
