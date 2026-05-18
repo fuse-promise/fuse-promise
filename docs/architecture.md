@@ -264,6 +264,8 @@ capability. The daemon stores nodes with:
 The public `mode` field represents permission bits, not the full Linux
 `st_mode` file type. The FUSE adapter combines node kind and permission bits
 when answering `getattr`.
+The public `mtime_nsec` field is validated as a non-negative Unix epoch
+nanosecond timestamp.
 
 The initial public ABI accepts UTF-8 path strings. If the project requires full
 Linux byte-string path coverage before ABI freeze, a byte-path API should be

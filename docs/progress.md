@@ -178,7 +178,7 @@ Acceptance:
 
 - [x] Serialize builder metadata through private IPC.
 - [x] Validate normalized relative paths in the daemon.
-- [~] Validate node type, permission bits, file size, mtime, duplicate paths,
+- [x] Validate node type, permission bits, file size, mtime, duplicate paths,
   and parent directories.
 - [x] Commit static snapshot Promise trees.
 - [ ] Return a visible path under `$XDG_RUNTIME_DIR/fuse-promise/`.

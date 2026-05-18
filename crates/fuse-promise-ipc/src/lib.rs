@@ -1152,6 +1152,7 @@ fn status_to_error_code(status: Status) -> ErrorCode {
         Status::Unavailable => ErrorCode::Unavailable,
         Status::Permission => ErrorCode::Permission,
         Status::NotFound => ErrorCode::NotFound,
+        Status::AlreadyExists => ErrorCode::InvalidRequest,
         Status::ProviderGone => ErrorCode::ProviderGone,
         Status::VersionMismatch => ErrorCode::VersionMismatch,
         _ => ErrorCode::Internal,
@@ -1729,6 +1730,73 @@ mod tests {
     }
 
     #[test]
+    fn promise_commit_rejects_invalid_metadata_without_mutating_runtime() {
+        let invalid_requests = vec![
+            invalid_commit_request("absolute", |request| {
+                request.nodes[0].relative_path = "/docs".to_owned();
+            }),
+            invalid_commit_request("dotdot", |request| {
+                request.nodes[0].relative_path = "docs/../bad".to_owned();
+            }),
+            invalid_commit_request("nul", |request| {
+                request.nodes[0].relative_path = "do\0cs".to_owned();
+            }),
+            invalid_commit_request("duplicate", |request| {
+                request.nodes.push(request.nodes[0].clone());
+            }),
+            invalid_commit_request("missing-parent", |request| {
+                request.nodes.remove(0);
+            }),
+            invalid_commit_request("file-parent", |request| {
+                request.nodes[0].kind = PromiseNodeKindBody::File;
+            }),
+            invalid_commit_request("bad-mode", |request| {
+                request.nodes[0].mode = 0o100755;
+            }),
+            invalid_commit_request("nonzero-dir-size", |request| {
+                request.nodes[0].size = 1;
+            }),
+            invalid_commit_request("negative-mtime", |request| {
+                request.nodes[0].mtime_nsec = -1;
+            }),
+            invalid_commit_request("empty-provider-node", |request| {
+                request.nodes[0].provider_node_id.clear();
+            }),
+        ];
+
+        for (case, request) in invalid_requests {
+            let (mut client, server) = UnixStream::pair().unwrap();
+            let runtime = Arc::new(Mutex::new(Runtime::new()));
+            let server_state = mounted_state(Arc::clone(&runtime));
+            let server_thread =
+                thread::spawn(move || handle_client_with_state(server, &server_state));
+
+            send_hello(&mut client);
+            write_frame(&mut client, &Request::ProviderRegister).unwrap();
+            let provider_id = match read_frame(&mut client).unwrap().unwrap() {
+                Response::ProviderRegistered { provider_id } => provider_id,
+                other => panic!("{case}: unexpected provider response: {other:?}"),
+            };
+
+            let mut request = request;
+            request.provider_id = provider_id;
+            write_frame(&mut client, &Request::PromiseCommit(request)).unwrap();
+            let response: Response = read_frame(&mut client).unwrap().unwrap();
+            match response {
+                Response::Error(ErrorBody {
+                    code: ErrorCode::InvalidRequest | ErrorCode::NotFound,
+                    ..
+                }) => {}
+                other => panic!("{case}: unexpected commit response: {other:?}"),
+            }
+
+            drop(client);
+            server_thread.join().unwrap().unwrap();
+            assert_eq!(runtime.lock().unwrap().promise_count(), 0, "{case}");
+        }
+    }
+
+    #[test]
     fn provider_connection_drop_marks_provider_disconnected() {
         let (mut client, server) = UnixStream::pair().unwrap();
         let runtime = Arc::new(Mutex::new(Runtime::new()));
@@ -2145,6 +2213,15 @@ mod tests {
                 },
             ],
         }
+    }
+
+    fn invalid_commit_request(
+        name: &'static str,
+        mutate: impl FnOnce(&mut PromiseCommitBody),
+    ) -> (&'static str, PromiseCommitBody) {
+        let mut request = sample_commit_request(1).into_body();
+        mutate(&mut request);
+        (name, request)
     }
 
     fn sample_read_request() -> ProviderReadRequest {

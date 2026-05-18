@@ -679,6 +679,9 @@ fn validate_attr(kind: NodeKind, attr: NodeAttr) -> Result<()> {
     if attr.mode & !0o7777 != 0 {
         return Err(Status::InvalidArgument);
     }
+    if attr.mtime_nsec < 0 {
+        return Err(Status::InvalidArgument);
+    }
     if kind == NodeKind::Directory && attr.size != 0 {
         return Err(Status::InvalidArgument);
     }
@@ -988,6 +991,10 @@ mod tests {
         );
         assert_eq!(
             builder.add_dir("nonempty-dir", NodeAttr::new(0o755, 1, 0), "dir"),
+            Err(Status::InvalidArgument)
+        );
+        assert_eq!(
+            builder.add_file("negative-mtime", NodeAttr::new(0o644, 1, -1), "bad"),
             Err(Status::InvalidArgument)
         );
     }

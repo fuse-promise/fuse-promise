@@ -174,7 +174,8 @@ void fp_promise_builder_free(fp_promise_builder_t *builder);
 
 `mode` contains Unix permission bits only, such as `0644` or `0755`. The
 runtime derives the file type from whether the caller adds a file or directory.
-Directories must use size `0`.
+Directories must use size `0`. `mtime_nsec` is a non-negative Unix epoch
+timestamp in nanoseconds.
 
 Materialize:
 
