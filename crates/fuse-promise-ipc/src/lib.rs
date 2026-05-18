@@ -191,6 +191,7 @@ enum Response {
     },
     ProviderUnregistered,
     PromiseCommitted(PromiseCommittedBody),
+    MaterializeProgress(MaterializeProgressBody),
     Materialized(MaterializedBody),
     MaterializeFailed(MaterializeFailedBody),
     ProviderReadRequest(ProviderReadRequestBody),
@@ -280,9 +281,27 @@ enum MaterializeConflictPolicyBody {
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
 struct MaterializedBody {
     target_path: String,
+    entries_done: u64,
+    entries_total: u64,
     bytes_written: u64,
+    bytes_total: u64,
     files_written: u64,
+    files_total: u64,
     directories_created: u64,
+    directories_total: u64,
+}
+
+#[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
+struct MaterializeProgressBody {
+    target_path: String,
+    entries_done: u64,
+    entries_total: u64,
+    bytes_written: u64,
+    bytes_total: u64,
+    files_written: u64,
+    files_total: u64,
+    directories_created: u64,
+    directories_total: u64,
 }
 
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
@@ -290,9 +309,14 @@ struct MaterializeFailedBody {
     code: ErrorCode,
     message: String,
     target_path: String,
+    entries_done: u64,
+    entries_total: u64,
     bytes_written: u64,
+    bytes_total: u64,
     files_written: u64,
+    files_total: u64,
     directories_created: u64,
+    directories_total: u64,
 }
 
 #[derive(Debug, Clone, Encode, Decode, PartialEq, Eq)]
@@ -556,9 +580,27 @@ pub struct MaterializeRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MaterializeResponse {
     pub target_path: PathBuf,
+    pub entries_done: u64,
+    pub entries_total: u64,
     pub bytes_written: u64,
+    pub bytes_total: u64,
     pub files_written: u64,
+    pub files_total: u64,
     pub directories_created: u64,
+    pub directories_total: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaterializeProgressReport {
+    pub target_path: PathBuf,
+    pub entries_done: u64,
+    pub entries_total: u64,
+    pub bytes_written: u64,
+    pub bytes_total: u64,
+    pub files_written: u64,
+    pub files_total: u64,
+    pub directories_created: u64,
+    pub directories_total: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -949,21 +991,33 @@ pub fn materialize_file(
     socket_path: &Path,
     request: MaterializeRequest,
 ) -> io::Result<MaterializeResponse> {
+    materialize_file_with_progress(socket_path, request, |_| Ok(()))
+}
+
+pub fn materialize_file_with_progress(
+    socket_path: &Path,
+    request: MaterializeRequest,
+    mut on_progress: impl FnMut(MaterializeProgressReport) -> io::Result<()>,
+) -> io::Result<MaterializeResponse> {
     let mut stream = connect_and_hello(socket_path)?;
 
     write_frame(&mut stream, &Request::Materialize(request.into_body()?))?;
-    match read_response(&mut stream)? {
-        Response::Materialized(response) => Ok(MaterializeResponse {
-            target_path: PathBuf::from(response.target_path),
-            bytes_written: response.bytes_written,
-            files_written: response.files_written,
-            directories_created: response.directories_created,
-        }),
-        Response::MaterializeFailed(error) => Err(materialize_failure_to_io(error)),
-        Response::Error(error) => Err(error_to_io(error)),
-        _ => Err(invalid_data(
-            "daemon returned an unexpected materialize response",
-        )),
+    loop {
+        match read_response(&mut stream)? {
+            Response::MaterializeProgress(progress) => {
+                on_progress(MaterializeProgressReport::from_body(progress))?;
+            }
+            Response::Materialized(response) => {
+                return Ok(MaterializeResponse::from_body(response))
+            }
+            Response::MaterializeFailed(error) => return Err(materialize_failure_to_io(error)),
+            Response::Error(error) => return Err(error_to_io(error)),
+            _ => {
+                return Err(invalid_data(
+                    "daemon returned an unexpected materialize response",
+                ))
+            }
+        }
     }
 }
 
@@ -1354,7 +1408,10 @@ fn handle_materialize(
     state: &IpcState,
     request: MaterializeBody,
 ) -> io::Result<()> {
-    match materialize_node_in_state(state, request) {
+    match materialize_node_in_state(state, request, |progress| {
+        write_frame(stream, &Response::MaterializeProgress(progress.to_body()))
+            .map_err(|_| Status::Io)
+    }) {
         Ok(response) => write_frame(stream, &Response::Materialized(response)),
         Err(error) => match error.progress {
             Some(ref progress) if progress.has_partial() => write_frame(
@@ -1406,9 +1463,14 @@ struct CreatedTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MaterializeProgress {
     target_path: PathBuf,
+    entries_done: u64,
+    entries_total: u64,
     bytes_written: u64,
+    bytes_total: u64,
     files_written: u64,
+    files_total: u64,
     directories_created: u64,
+    directories_total: u64,
 }
 
 #[derive(Debug)]
@@ -1466,17 +1528,49 @@ impl MaterializeWriteError {
 }
 
 impl MaterializeProgress {
-    fn new(target_path: PathBuf) -> Self {
+    fn new(target_path: PathBuf, entries: &[MaterializeEntryPlan]) -> Self {
+        let bytes_total = entries
+            .iter()
+            .filter(|entry| entry.kind == NodeKind::File)
+            .map(|entry| entry.size)
+            .sum();
+        let files_total = entries
+            .iter()
+            .filter(|entry| entry.kind == NodeKind::File)
+            .count() as u64;
+        let directories_total = entries
+            .iter()
+            .filter(|entry| entry.kind == NodeKind::Directory)
+            .count() as u64;
         Self {
             target_path,
+            entries_done: 0,
+            entries_total: entries.len() as u64,
             bytes_written: 0,
+            bytes_total,
             files_written: 0,
+            files_total,
             directories_created: 0,
+            directories_total,
         }
     }
 
     fn has_partial(&self) -> bool {
         self.bytes_written > 0 || self.files_written > 0 || self.directories_created > 0
+    }
+
+    fn to_body(&self) -> MaterializeProgressBody {
+        MaterializeProgressBody {
+            target_path: self.target_path.to_string_lossy().into_owned(),
+            entries_done: self.entries_done,
+            entries_total: self.entries_total,
+            bytes_written: self.bytes_written,
+            bytes_total: self.bytes_total,
+            files_written: self.files_written,
+            files_total: self.files_total,
+            directories_created: self.directories_created,
+            directories_total: self.directories_total,
+        }
     }
 }
 
@@ -1500,9 +1594,14 @@ impl MaterializeOperationError {
             code: status_to_error_code(self.status),
             message: self.status.as_str().to_owned(),
             target_path: progress.target_path.to_string_lossy().into_owned(),
+            entries_done: progress.entries_done,
+            entries_total: progress.entries_total,
             bytes_written: progress.bytes_written,
+            bytes_total: progress.bytes_total,
             files_written: progress.files_written,
+            files_total: progress.files_total,
             directories_created: progress.directories_created,
+            directories_total: progress.directories_total,
         }
     }
 }
@@ -1510,13 +1609,18 @@ impl MaterializeOperationError {
 fn materialize_node_in_state(
     state: &IpcState,
     request: MaterializeBody,
+    mut report_progress: impl FnMut(&MaterializeProgress) -> std::result::Result<(), Status>,
 ) -> std::result::Result<MaterializedBody, MaterializeOperationError> {
     let request = MaterializeRequest::from_body(request)
         .map_err(MaterializeOperationError::without_progress)?;
     let plan =
         plan_materialize(state, &request).map_err(MaterializeOperationError::without_progress)?;
-    let mut progress = MaterializeProgress::new(plan.target_path.clone());
+    let mut progress = MaterializeProgress::new(plan.target_path.clone(), &plan.entries);
     let mut created_targets = Vec::new();
+    report_progress(&progress).map_err(|status| {
+        cleanup_created_targets(&created_targets);
+        MaterializeOperationError::with_progress(status, progress.clone())
+    })?;
 
     for entry in plan
         .entries
@@ -1528,7 +1632,12 @@ fn materialize_node_in_state(
                 if created.remove_on_cleanup {
                     progress.directories_created += 1;
                 }
+                progress.entries_done += 1;
                 created_targets.push(created);
+                report_progress(&progress).map_err(|status| {
+                    cleanup_created_targets(&created_targets);
+                    MaterializeOperationError::with_progress(status, progress.clone())
+                })?;
             }
             Err(status) => {
                 cleanup_created_targets(&created_targets);
@@ -1542,14 +1651,29 @@ fn materialize_node_in_state(
         .iter()
         .filter(|entry| entry.kind == NodeKind::File)
     {
-        match write_materialized_file(state, &plan.promise_id, entry, plan.conflict_policy) {
+        let bytes_before_file = progress.bytes_written;
+        match write_materialized_file(
+            state,
+            &plan.promise_id,
+            entry,
+            plan.conflict_policy,
+            |file_bytes_written| {
+                progress.bytes_written = bytes_before_file + file_bytes_written;
+                report_progress(&progress)
+            },
+        ) {
             Ok(outcome) => {
-                progress.bytes_written += outcome.bytes_written;
+                progress.bytes_written = bytes_before_file + outcome.bytes_written;
                 progress.files_written += 1;
+                progress.entries_done += 1;
                 created_targets.push(outcome.target);
+                report_progress(&progress).map_err(|status| {
+                    cleanup_created_targets(&created_targets);
+                    MaterializeOperationError::with_progress(status, progress.clone())
+                })?;
             }
             Err(error) => {
-                progress.bytes_written += error.bytes_written;
+                progress.bytes_written = bytes_before_file + error.bytes_written;
                 if let Some(target) = error.target {
                     created_targets.push(target);
                 }
@@ -1602,9 +1726,14 @@ fn materialize_node_in_state(
 
     Ok(MaterializedBody {
         target_path: plan.target_path.to_string_lossy().into_owned(),
+        entries_done: progress.entries_done,
+        entries_total: progress.entries_total,
         bytes_written: progress.bytes_written,
+        bytes_total: progress.bytes_total,
         files_written: progress.files_written,
+        files_total: progress.files_total,
         directories_created: progress.directories_created,
+        directories_total: progress.directories_total,
     })
 }
 
@@ -1882,6 +2011,7 @@ fn write_materialized_file(
     promise_id: &str,
     entry: &MaterializeEntryPlan,
     conflict_policy: MaterializeConflictPolicy,
+    mut report_file_progress: impl FnMut(u64) -> std::result::Result<(), Status>,
 ) -> std::result::Result<MaterializeFileOutcome, MaterializeWriteError> {
     let MaterializeFileTarget {
         mut file,
@@ -1919,6 +2049,9 @@ fn write_materialized_file(
                 write_target.clone(),
                 offset,
             )
+        })?;
+        report_file_progress(offset).map_err(|status| {
+            MaterializeWriteError::with_target(status, write_target.clone(), offset)
         })?;
     }
 
@@ -2348,12 +2481,17 @@ fn materialize_failure_to_io(error: MaterializeFailedBody) -> io::Error {
     io::Error::new(
         error_code_to_io_kind(error.code),
         format!(
-            "{}; target_path={}; bytes_written={}; files_written={}; directories_created={}",
+            "{}; target_path={}; entries_done={}; entries_total={}; bytes_written={}; bytes_total={}; files_written={}; files_total={}; directories_created={}; directories_total={}",
             error.message,
             error.target_path,
+            error.entries_done,
+            error.entries_total,
             error.bytes_written,
+            error.bytes_total,
             error.files_written,
-            error.directories_created
+            error.files_total,
+            error.directories_created,
+            error.directories_total
         ),
     )
 }
@@ -2467,14 +2605,64 @@ impl PromiseNodeSpec {
 }
 
 impl MaterializeResponse {
+    fn from_body(body: MaterializedBody) -> Self {
+        Self {
+            target_path: PathBuf::from(body.target_path),
+            entries_done: body.entries_done,
+            entries_total: body.entries_total,
+            bytes_written: body.bytes_written,
+            bytes_total: body.bytes_total,
+            files_written: body.files_written,
+            files_total: body.files_total,
+            directories_created: body.directories_created,
+            directories_total: body.directories_total,
+        }
+    }
+
     pub fn encode_text(&self) -> String {
         let mut output = String::new();
         let _ = writeln!(output, "ok");
         let _ = writeln!(output, "target_path={}", self.target_path.display());
+        let _ = writeln!(output, "entries_done={}", self.entries_done);
+        let _ = writeln!(output, "entries_total={}", self.entries_total);
         let _ = writeln!(output, "bytes_written={}", self.bytes_written);
+        let _ = writeln!(output, "bytes_total={}", self.bytes_total);
         let _ = writeln!(output, "files_written={}", self.files_written);
+        let _ = writeln!(output, "files_total={}", self.files_total);
         let _ = writeln!(output, "directories_created={}", self.directories_created);
+        let _ = writeln!(output, "directories_total={}", self.directories_total);
         output
+    }
+}
+
+impl MaterializeProgressReport {
+    fn from_body(body: MaterializeProgressBody) -> Self {
+        Self {
+            target_path: PathBuf::from(body.target_path),
+            entries_done: body.entries_done,
+            entries_total: body.entries_total,
+            bytes_written: body.bytes_written,
+            bytes_total: body.bytes_total,
+            files_written: body.files_written,
+            files_total: body.files_total,
+            directories_created: body.directories_created,
+            directories_total: body.directories_total,
+        }
+    }
+
+    pub fn encode_text(&self) -> String {
+        format!(
+            "progress target_path={} entries_done={} entries_total={} bytes_written={} bytes_total={} files_written={} files_total={} directories_created={} directories_total={}",
+            self.target_path.display(),
+            self.entries_done,
+            self.entries_total,
+            self.bytes_written,
+            self.bytes_total,
+            self.files_written,
+            self.files_total,
+            self.directories_created,
+            self.directories_total
+        )
     }
 }
 
@@ -3637,9 +3825,14 @@ mod tests {
             mtime_nsec: 0,
         };
 
-        let error =
-            write_materialized_file(&state, "promise-1", &entry, MaterializeConflictPolicy::Fail)
-                .unwrap_err();
+        let error = write_materialized_file(
+            &state,
+            "promise-1",
+            &entry,
+            MaterializeConflictPolicy::Fail,
+            |_| Ok(()),
+        )
+        .unwrap_err();
 
         assert_eq!(error.status, Status::AlreadyExists);
         assert!(error.target.is_none());
@@ -3748,6 +3941,7 @@ mod tests {
                 target_dir: target_dir.path().to_string_lossy().into_owned(),
                 conflict_policy: MaterializeConflictPolicyBody::Fail,
             },
+            |_| Ok(()),
         )
         .unwrap_err();
 

@@ -244,8 +244,9 @@ Minimum message families:
   registrations.
 - `Materialize`. Implemented for files and directory subtrees with
   fail-on-conflict, overwrite, and rename behavior.
+- `MaterializeProgress`. Implemented as private progress frames forwarded to
+  `fpctl --progress` and the public materialize progress callback.
 - `MaterializeCancel`.
-- `MaterializeStatus`.
 - Structured error response.
 
 IPC validation rules:

@@ -81,13 +81,32 @@ typedef uint32_t fp_conflict_policy_t;
 #define FP_CONFLICT_OVERWRITE ((fp_conflict_policy_t)1u)
 #define FP_CONFLICT_RENAME ((fp_conflict_policy_t)2u)
 
+typedef struct fp_materialize_progress {
+    uint32_t struct_size;
+    uint64_t entries_done;
+    uint64_t entries_total;
+    uint64_t bytes_written;
+    uint64_t bytes_total;
+    uint64_t files_written;
+    uint64_t files_total;
+    uint64_t directories_created;
+    uint64_t directories_total;
+    const char *target_path;
+} fp_materialize_progress_t;
+
+typedef fp_status_t (*fp_materialize_progress_fn)(
+    const fp_materialize_progress_t *progress,
+    void *user_data);
+
 typedef struct fp_materialize_options {
     uint32_t struct_size;
     fp_conflict_policy_t conflict_policy;
+    fp_materialize_progress_fn progress;
+    void *progress_user_data;
 } fp_materialize_options_t;
 
 #define FP_MATERIALIZE_OPTIONS_INIT \
-    { sizeof(fp_materialize_options_t), FP_CONFLICT_FAIL }
+    { sizeof(fp_materialize_options_t), FP_CONFLICT_FAIL, NULL, NULL }
 
 const char *fp_status_string(fp_status_t status);
 

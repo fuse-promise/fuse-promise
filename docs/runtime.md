@@ -156,8 +156,8 @@ read verification is covered by the smoke harness. File and directory subtree
 materialize IPC are implemented for fail-on-conflict, overwrite, and rename
 behavior. Reads for materialized files can use the local materialized path
 after provider disconnect. An opt-in read-through cache can satisfy fully
-cached ranges after provider disconnect; progress and cancellation are still
-under development.
+cached ranges after provider disconnect; cancellation is still under
+development.
 
 `libfusepromise.so` provider registration uses this private daemon IPC and no
 longer creates authoritative provider sessions in a client-local runtime. Its
@@ -234,6 +234,7 @@ fp_materialize()
   -> fuse-promised validates target and promise ownership
   -> runtime walks Promise tree
   -> runtime reads provider content in chunks
+  -> runtime reports progress snapshots
   -> runtime writes real local files
   -> runtime applies metadata
   -> runtime records materialized state

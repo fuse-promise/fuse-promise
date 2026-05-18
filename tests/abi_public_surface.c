@@ -99,14 +99,44 @@ _Static_assert(offsetof(fp_node_attr_t, size) == 8u,
 _Static_assert(offsetof(fp_node_attr_t, mtime_nsec) == 16u,
                "fp_node_attr_t.mtime_nsec offset changed");
 
-_Static_assert(sizeof(fp_materialize_options_t) == 8u,
+_Static_assert(sizeof(fp_materialize_progress_t) == 80u,
+               "fp_materialize_progress_t size changed");
+_Static_assert(_Alignof(fp_materialize_progress_t) == 8u,
+               "fp_materialize_progress_t alignment changed");
+_Static_assert(offsetof(fp_materialize_progress_t, struct_size) == 0u,
+               "fp_materialize_progress_t.struct_size offset changed");
+_Static_assert(offsetof(fp_materialize_progress_t, entries_done) == 8u,
+               "fp_materialize_progress_t.entries_done offset changed");
+_Static_assert(offsetof(fp_materialize_progress_t, entries_total) == 16u,
+               "fp_materialize_progress_t.entries_total offset changed");
+_Static_assert(offsetof(fp_materialize_progress_t, bytes_written) == 24u,
+               "fp_materialize_progress_t.bytes_written offset changed");
+_Static_assert(offsetof(fp_materialize_progress_t, bytes_total) == 32u,
+               "fp_materialize_progress_t.bytes_total offset changed");
+_Static_assert(offsetof(fp_materialize_progress_t, files_written) == 40u,
+               "fp_materialize_progress_t.files_written offset changed");
+_Static_assert(offsetof(fp_materialize_progress_t, files_total) == 48u,
+               "fp_materialize_progress_t.files_total offset changed");
+_Static_assert(offsetof(fp_materialize_progress_t, directories_created) ==
+                   56u,
+               "fp_materialize_progress_t.directories_created offset changed");
+_Static_assert(offsetof(fp_materialize_progress_t, directories_total) == 64u,
+               "fp_materialize_progress_t.directories_total offset changed");
+_Static_assert(offsetof(fp_materialize_progress_t, target_path) == 72u,
+               "fp_materialize_progress_t.target_path offset changed");
+
+_Static_assert(sizeof(fp_materialize_options_t) == 24u,
                "fp_materialize_options_t size changed");
-_Static_assert(_Alignof(fp_materialize_options_t) == 4u,
+_Static_assert(_Alignof(fp_materialize_options_t) == 8u,
                "fp_materialize_options_t alignment changed");
 _Static_assert(offsetof(fp_materialize_options_t, struct_size) == 0u,
                "fp_materialize_options_t.struct_size offset changed");
 _Static_assert(offsetof(fp_materialize_options_t, conflict_policy) == 4u,
                "fp_materialize_options_t.conflict_policy offset changed");
+_Static_assert(offsetof(fp_materialize_options_t, progress) == 8u,
+               "fp_materialize_options_t.progress offset changed");
+_Static_assert(offsetof(fp_materialize_options_t, progress_user_data) == 16u,
+               "fp_materialize_options_t.progress_user_data offset changed");
 
 static int expect_status_string(fp_status_t status, const char *expected) {
     const char *actual = fp_status_string(status);
@@ -162,6 +192,8 @@ int main(void) {
         FP_MATERIALIZE_OPTIONS_INIT;
     CHECK(materialize_options.struct_size == sizeof(fp_materialize_options_t));
     CHECK(materialize_options.conflict_policy == FP_CONFLICT_FAIL);
+    CHECK(materialize_options.progress == NULL);
+    CHECK(materialize_options.progress_user_data == NULL);
 
     fp_context_t *context = NULL;
     CHECK(fp_context_open(&context_options, NULL) == FP_ERR_INVALID_ARGUMENT);

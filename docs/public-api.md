@@ -221,13 +221,32 @@ typedef uint32_t fp_conflict_policy_t;
 #define FP_CONFLICT_OVERWRITE ((fp_conflict_policy_t)1u)
 #define FP_CONFLICT_RENAME ((fp_conflict_policy_t)2u)
 
+typedef struct fp_materialize_progress {
+    uint32_t struct_size;
+    uint64_t entries_done;
+    uint64_t entries_total;
+    uint64_t bytes_written;
+    uint64_t bytes_total;
+    uint64_t files_written;
+    uint64_t files_total;
+    uint64_t directories_created;
+    uint64_t directories_total;
+    const char *target_path;
+} fp_materialize_progress_t;
+
+typedef fp_status_t (*fp_materialize_progress_fn)(
+    const fp_materialize_progress_t *progress,
+    void *user_data);
+
 typedef struct fp_materialize_options {
     uint32_t struct_size;
     fp_conflict_policy_t conflict_policy;
+    fp_materialize_progress_fn progress;
+    void *progress_user_data;
 } fp_materialize_options_t;
 
 #define FP_MATERIALIZE_OPTIONS_INIT \
-    { sizeof(fp_materialize_options_t), FP_CONFLICT_FAIL }
+    { sizeof(fp_materialize_options_t), FP_CONFLICT_FAIL, NULL, NULL }
 
 fp_status_t fp_materialize(
     fp_context_t *context,
@@ -241,11 +260,16 @@ IPC and returns `FP_ERR_UNAVAILABLE` until the daemon reports a commit-ready
 FUSE namespace. When commit-ready, the daemon owns the namespace and may return
 the visible Promise path. `fp_materialize()` supports file and directory
 subtree materialize with `FP_CONFLICT_FAIL`, `FP_CONFLICT_OVERWRITE`, and
-`FP_CONFLICT_RENAME`; progress and cancellation remain under development.
+`FP_CONFLICT_RENAME`; cancellation remains under development.
 `FP_CONFLICT_RENAME` chooses a non-existing root target before materializing:
 files receive a ` (N)` suffix before the extension, directories receive the
 suffix after the directory name, and subtree child names are preserved under
 that chosen root.
+When `fp_materialize_options_t.progress` is non-NULL, the synchronous
+`fp_materialize()` call invokes it with best-effort progress snapshots. The
+`target_path` pointer in `fp_materialize_progress_t` is valid only for the
+duration of the callback. Returning any status other than `FP_OK` aborts the
+operation and returns that status to the caller.
 Materialized files can satisfy later reads through their local materialized
 paths, and an opt-in daemon read-through cache can coalesce reads, prefetch
 sequential ranges, and satisfy fully cached ranges without changing the public

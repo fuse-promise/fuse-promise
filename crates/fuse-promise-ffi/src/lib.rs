@@ -1,15 +1,16 @@
 #![allow(non_camel_case_types)]
 
 use fuse_promise_ipc::{
-    commit_promise, connect_provider, materialize_file, MaterializeConflictPolicy,
-    MaterializeRequest, PromiseCommitRequest, ProviderConnection, ProviderReadRequest,
-    ProviderReadResponse, ProviderReadStatus,
+    commit_promise, connect_provider, materialize_file_with_progress, MaterializeConflictPolicy,
+    MaterializeProgressReport, MaterializeRequest, PromiseCommitRequest, ProviderConnection,
+    ProviderReadRequest, ProviderReadResponse, ProviderReadStatus,
 };
 use fuse_promise_runtime::{
     default_control_socket_path, default_mount_path, validate_runtime_dir_path, NodeAttr,
     PromiseBuilder, ProviderId, Status, API_VERSION,
 };
 use std::ffi::{CStr, CString};
+use std::fmt;
 use std::fs;
 use std::io;
 use std::os::raw::{c_char, c_void};
@@ -88,9 +89,32 @@ pub const FP_CONFLICT_OVERWRITE: fp_conflict_policy_t = 1;
 pub const FP_CONFLICT_RENAME: fp_conflict_policy_t = 2;
 
 #[repr(C)]
+pub struct fp_materialize_progress_t {
+    pub struct_size: u32,
+    pub entries_done: u64,
+    pub entries_total: u64,
+    pub bytes_written: u64,
+    pub bytes_total: u64,
+    pub files_written: u64,
+    pub files_total: u64,
+    pub directories_created: u64,
+    pub directories_total: u64,
+    pub target_path: *const c_char,
+}
+
+pub type fp_materialize_progress_fn = Option<
+    unsafe extern "C" fn(
+        progress: *const fp_materialize_progress_t,
+        user_data: *mut c_void,
+    ) -> fp_status_t,
+>;
+
+#[repr(C)]
 pub struct fp_materialize_options_t {
     pub struct_size: u32,
     pub conflict_policy: fp_conflict_policy_t,
+    pub progress: fp_materialize_progress_fn,
+    pub progress_user_data: *mut c_void,
 }
 
 pub struct fp_context {
@@ -111,6 +135,23 @@ pub struct fp_promise_builder {
 }
 
 pub enum fp_materialize_job {}
+
+struct MaterializeOptions {
+    conflict_policy: MaterializeConflictPolicy,
+    progress: fp_materialize_progress_fn,
+    progress_user_data: *mut c_void,
+}
+
+#[derive(Debug)]
+struct FfiStatusError(fp_status_t);
+
+impl fmt::Display for FfiStatusError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "ffi status {}", self.0)
+    }
+}
+
+impl std::error::Error for FfiStatusError {}
 
 struct ContextInner {
     socket_path: PathBuf,
@@ -360,20 +401,57 @@ pub unsafe extern "C" fn fp_materialize(
         let context = &*context;
         let promise_path = absolute_client_path(cstr_to_str(promise_path)?).map_err(io_to_ffi)?;
         let target_dir = checked_target_dir(cstr_to_str(target_dir)?)?;
-        let conflict_policy = materialize_options(options)?;
+        let materialize_options = materialize_options(options)?;
 
-        materialize_file(
+        materialize_file_with_progress(
             &context.inner.socket_path,
             MaterializeRequest {
                 source_path: promise_path,
                 target_dir,
-                conflict_policy,
+                conflict_policy: materialize_options.conflict_policy,
+            },
+            |progress| {
+                dispatch_materialize_progress(
+                    materialize_options.progress,
+                    materialize_options.progress_user_data,
+                    &progress,
+                )
             },
         )
         .map_err(io_to_ffi)?;
 
         Ok(FP_OK)
     })
+}
+
+fn dispatch_materialize_progress(
+    progress_callback: fp_materialize_progress_fn,
+    progress_user_data: *mut c_void,
+    progress: &MaterializeProgressReport,
+) -> io::Result<()> {
+    let Some(progress_callback) = progress_callback else {
+        return Ok(());
+    };
+    let target_path = CString::new(progress.target_path.to_string_lossy().into_owned())
+        .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    let progress_body = fp_materialize_progress_t {
+        struct_size: std::mem::size_of::<fp_materialize_progress_t>() as u32,
+        entries_done: progress.entries_done,
+        entries_total: progress.entries_total,
+        bytes_written: progress.bytes_written,
+        bytes_total: progress.bytes_total,
+        files_written: progress.files_written,
+        files_total: progress.files_total,
+        directories_created: progress.directories_created,
+        directories_total: progress.directories_total,
+        target_path: target_path.as_ptr(),
+    };
+    let status = unsafe { progress_callback(&progress_body, progress_user_data) };
+    if status == FP_OK {
+        Ok(())
+    } else {
+        Err(io::Error::other(FfiStatusError(status)))
+    }
 }
 
 fn ffi_guard(action: impl FnOnce() -> Result<fp_status_t, fp_status_t>) -> fp_status_t {
@@ -563,19 +641,39 @@ unsafe fn node_attr(attr: *const fp_node_attr_t) -> Result<NodeAttr, fp_status_t
 
 unsafe fn materialize_options(
     options: *const fp_materialize_options_t,
-) -> Result<MaterializeConflictPolicy, fp_status_t> {
+) -> Result<MaterializeOptions, fp_status_t> {
     if options.is_null() {
-        return Ok(MaterializeConflictPolicy::Fail);
+        return Ok(MaterializeOptions {
+            conflict_policy: MaterializeConflictPolicy::Fail,
+            progress: None,
+            progress_user_data: ptr::null_mut(),
+        });
     }
     if ((*options).struct_size as usize) < required_materialize_options_size() {
         return Err(FP_ERR_INVALID_ARGUMENT);
     }
-    match (*options).conflict_policy {
-        FP_CONFLICT_FAIL => Ok(MaterializeConflictPolicy::Fail),
-        FP_CONFLICT_OVERWRITE => Ok(MaterializeConflictPolicy::Overwrite),
-        FP_CONFLICT_RENAME => Ok(MaterializeConflictPolicy::Rename),
-        _ => Err(FP_ERR_INVALID_ARGUMENT),
-    }
+    let conflict_policy = match (*options).conflict_policy {
+        FP_CONFLICT_FAIL => MaterializeConflictPolicy::Fail,
+        FP_CONFLICT_OVERWRITE => MaterializeConflictPolicy::Overwrite,
+        FP_CONFLICT_RENAME => MaterializeConflictPolicy::Rename,
+        _ => return Err(FP_ERR_INVALID_ARGUMENT),
+    };
+    let progress = if ((*options).struct_size as usize) >= materialize_progress_field_end() {
+        (*options).progress
+    } else {
+        None
+    };
+    let progress_user_data =
+        if ((*options).struct_size as usize) >= materialize_progress_user_data_field_end() {
+            (*options).progress_user_data
+        } else {
+            ptr::null_mut()
+        };
+    Ok(MaterializeOptions {
+        conflict_policy,
+        progress,
+        progress_user_data,
+    })
 }
 
 fn absolute_client_path(path: &str) -> io::Result<PathBuf> {
@@ -650,6 +748,16 @@ fn required_materialize_options_size() -> usize {
     2 * std::mem::size_of::<u32>()
 }
 
+fn materialize_progress_field_end() -> usize {
+    struct_field_end::<fp_materialize_options_t, fp_materialize_progress_fn>(
+        required_materialize_options_size(),
+    )
+}
+
+fn materialize_progress_user_data_field_end() -> usize {
+    struct_field_end::<fp_materialize_options_t, *mut c_void>(materialize_progress_field_end())
+}
+
 fn struct_field_end<T, F>(previous_end: usize) -> usize {
     let _ = std::mem::size_of::<T>();
     let offset = align_up(previous_end, std::mem::align_of::<F>());
@@ -703,6 +811,12 @@ fn provider_read_status_from_ffi(status: fp_status_t) -> ProviderReadStatus {
 }
 
 fn io_to_ffi(error: io::Error) -> fp_status_t {
+    if let Some(status) = error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<FfiStatusError>())
+    {
+        return status.0;
+    }
     match error.kind() {
         io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => FP_ERR_VERSION_MISMATCH,
         io::ErrorKind::AlreadyExists => FP_ERR_ALREADY_EXISTS,
@@ -712,6 +826,7 @@ fn io_to_ffi(error: io::Error) -> fp_status_t {
         io::ErrorKind::BrokenPipe => FP_ERR_PROVIDER_GONE,
         io::ErrorKind::PermissionDenied => FP_ERR_PERMISSION,
         io::ErrorKind::TimedOut => FP_ERR_TIMEOUT,
+        io::ErrorKind::Interrupted => FP_ERR_CANCELLED,
         _ => FP_ERR_IO,
     }
 }
@@ -822,8 +937,51 @@ mod tests {
         assert_eq!(std::mem::offset_of!(fp_node_attr_t, size), 8);
         assert_eq!(std::mem::offset_of!(fp_node_attr_t, mtime_nsec), 16);
 
-        assert_eq!(std::mem::size_of::<fp_materialize_options_t>(), 8);
-        assert_eq!(std::mem::align_of::<fp_materialize_options_t>(), 4);
+        assert_eq!(std::mem::size_of::<fp_materialize_progress_t>(), 80);
+        assert_eq!(std::mem::align_of::<fp_materialize_progress_t>(), 8);
+        assert_eq!(
+            std::mem::offset_of!(fp_materialize_progress_t, struct_size),
+            0
+        );
+        assert_eq!(
+            std::mem::offset_of!(fp_materialize_progress_t, entries_done),
+            8
+        );
+        assert_eq!(
+            std::mem::offset_of!(fp_materialize_progress_t, entries_total),
+            16
+        );
+        assert_eq!(
+            std::mem::offset_of!(fp_materialize_progress_t, bytes_written),
+            24
+        );
+        assert_eq!(
+            std::mem::offset_of!(fp_materialize_progress_t, bytes_total),
+            32
+        );
+        assert_eq!(
+            std::mem::offset_of!(fp_materialize_progress_t, files_written),
+            40
+        );
+        assert_eq!(
+            std::mem::offset_of!(fp_materialize_progress_t, files_total),
+            48
+        );
+        assert_eq!(
+            std::mem::offset_of!(fp_materialize_progress_t, directories_created),
+            56
+        );
+        assert_eq!(
+            std::mem::offset_of!(fp_materialize_progress_t, directories_total),
+            64
+        );
+        assert_eq!(
+            std::mem::offset_of!(fp_materialize_progress_t, target_path),
+            72
+        );
+
+        assert_eq!(std::mem::size_of::<fp_materialize_options_t>(), 24);
+        assert_eq!(std::mem::align_of::<fp_materialize_options_t>(), 8);
         assert_eq!(
             std::mem::offset_of!(fp_materialize_options_t, struct_size),
             0
@@ -831,6 +989,11 @@ mod tests {
         assert_eq!(
             std::mem::offset_of!(fp_materialize_options_t, conflict_policy),
             4
+        );
+        assert_eq!(std::mem::offset_of!(fp_materialize_options_t, progress), 8);
+        assert_eq!(
+            std::mem::offset_of!(fp_materialize_options_t, progress_user_data),
+            16
         );
     }
 

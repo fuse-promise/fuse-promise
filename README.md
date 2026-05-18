@@ -32,8 +32,8 @@ cover `fpctl status`, `fpctl list`, `find`, `ls`, `stat`, offset `dd`, `cat`,
 optional read-through cache mode, large metadata-only tree traversal, and
 bounded random reads from a large promised file.
 File and directory subtree materialize are implemented for the
-fail-on-conflict, overwrite, and rename policies; progress and cancellation
-remain under development. The runtime exposes
+fail-on-conflict, overwrite, and rename policies with progress reporting;
+cancellation remains under development. The runtime exposes
 `cache_policy=no-cache` by default through `fpctl status`; an opt-in daemon
 `--cache=read-through` mode
 coalesces reads into cache chunks, stores complete read ranges in memory, and
@@ -55,8 +55,7 @@ The first implementation target is a read-only Promise filesystem MVP:
 - Support `stat`, `readdir`, `open`, and offset-based `read`.
 - Route reads to provider callbacks.
 
-Progress reporting, cancellation, and final stable ABI release preparation
-remain later phases.
+Cancellation and final stable ABI release preparation remain later phases.
 
 ## Why
 

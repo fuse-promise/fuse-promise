@@ -366,7 +366,7 @@ Minimum private IPC capabilities:
 - Route provider read requests and responses.
 - Query daemon status for `fpctl`.
 - Inspect daemon-owned promises and runtime nodes for `fpctl list`.
-- Request materialization and cancellation.
+- Request materialization, report materialize progress, and cancellation.
 - Propagate provider disconnects.
 
 IPC messages must validate size, version, provider ownership, path bounds, read

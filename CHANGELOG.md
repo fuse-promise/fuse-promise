@@ -21,5 +21,5 @@ Initial developer release scope:
 Not included in this release:
 
 - Stable ABI guarantee.
-- Progress reporting or cancellation.
+- Cancellation.
 - Network, cloud-provider, P2P, clipboard, or desktop integration logic.

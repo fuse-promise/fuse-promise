@@ -182,11 +182,22 @@ diff -r "$expected_tree/docs" "$rsync_dir/docs" >/dev/null \
     || fail "rsync output did not match expected tree"
 
 XDG_RUNTIME_DIR="$runtime_dir" "$repo_dir/target/debug/fpctl" \
-    materialize "$file_path" "$materialize_dir" > "$work_dir/materialize.out"
+    materialize --progress "$file_path" "$materialize_dir" \
+    > "$work_dir/materialize.out" 2> "$work_dir/materialize-progress.err"
 grep -q "^target_path=$materialize_dir/readme.txt$" "$work_dir/materialize.out" \
     || fail "materialize did not report expected target path"
+grep -q '^entries_done=1$' "$work_dir/materialize.out" \
+    || fail "materialize did not report completed entries"
+grep -q '^entries_total=1$' "$work_dir/materialize.out" \
+    || fail "materialize did not report total entries"
 grep -q '^bytes_written=24$' "$work_dir/materialize.out" \
     || fail "materialize did not report expected byte count"
+grep -q '^bytes_total=24$' "$work_dir/materialize.out" \
+    || fail "materialize did not report total byte count"
+grep -q 'entries_done=0 entries_total=1 bytes_written=0 bytes_total=24' "$work_dir/materialize-progress.err" \
+    || fail "materialize progress did not report initial state"
+grep -q 'entries_done=1 entries_total=1 bytes_written=24 bytes_total=24' "$work_dir/materialize-progress.err" \
+    || fail "materialize progress did not report final state"
 cmp "$expected_file" "$materialize_dir/readme.txt" >/dev/null \
     || fail "materialized file did not match provider data"
 materialized_stat=$(stat -c '%s %a %Y' "$materialize_dir/readme.txt")

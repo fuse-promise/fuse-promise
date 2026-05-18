@@ -128,7 +128,7 @@ Expected commands may include:
 fpctl status
 fpctl list
 fpctl inspect <promise-path>
-fpctl materialize [--overwrite|--rename] <promise-path> <target-dir>
+fpctl materialize [--progress] [--overwrite|--rename] <promise-path> <target-dir>
 fpctl destroy <promise-path>
 ```
 

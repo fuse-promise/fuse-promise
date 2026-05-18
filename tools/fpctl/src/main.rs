@@ -1,5 +1,6 @@
 use fuse_promise_ipc::{
-    materialize_file, query_inspect, query_status, MaterializeConflictPolicy, MaterializeRequest,
+    materialize_file_with_progress, query_inspect, query_status, MaterializeConflictPolicy,
+    MaterializeRequest,
 };
 use fuse_promise_runtime::{default_control_socket_path, default_mount_path, CachePolicy};
 use std::env;
@@ -28,31 +29,40 @@ fn main() -> ExitCode {
             list()
         }
         Some("materialize") => {
-            let Some(first) = args.next() else {
+            let mut conflict_policy = MaterializeConflictPolicy::Fail;
+            let mut show_progress = false;
+            let mut promise_path = None;
+            for arg in args.by_ref() {
+                match arg.as_str() {
+                    "--overwrite" if conflict_policy == MaterializeConflictPolicy::Fail => {
+                        conflict_policy = MaterializeConflictPolicy::Overwrite;
+                    }
+                    "--rename" if conflict_policy == MaterializeConflictPolicy::Fail => {
+                        conflict_policy = MaterializeConflictPolicy::Rename;
+                    }
+                    "--overwrite" | "--rename" => {
+                        eprintln!("fpctl: materialize conflict option was already set");
+                        print_help();
+                        return ExitCode::from(2);
+                    }
+                    "--progress" => {
+                        show_progress = true;
+                    }
+                    option if option.starts_with("--") => {
+                        eprintln!("fpctl: unknown materialize option: {option}");
+                        print_help();
+                        return ExitCode::from(2);
+                    }
+                    _ => {
+                        promise_path = Some(arg);
+                        break;
+                    }
+                }
+            }
+            let Some(promise_path) = promise_path else {
                 eprintln!("fpctl: materialize requires a promise path");
                 print_help();
                 return ExitCode::from(2);
-            };
-            let (conflict_policy, promise_path) = if first == "--overwrite" {
-                let Some(promise_path) = args.next() else {
-                    eprintln!("fpctl: materialize --overwrite requires a promise path");
-                    print_help();
-                    return ExitCode::from(2);
-                };
-                (MaterializeConflictPolicy::Overwrite, promise_path)
-            } else if first == "--rename" {
-                let Some(promise_path) = args.next() else {
-                    eprintln!("fpctl: materialize --rename requires a promise path");
-                    print_help();
-                    return ExitCode::from(2);
-                };
-                (MaterializeConflictPolicy::Rename, promise_path)
-            } else if first.starts_with("--") {
-                eprintln!("fpctl: unknown materialize option: {first}");
-                print_help();
-                return ExitCode::from(2);
-            } else {
-                (MaterializeConflictPolicy::Fail, first)
             };
             let Some(target_dir) = args.next() else {
                 eprintln!("fpctl: materialize requires a target directory");
@@ -64,7 +74,7 @@ fn main() -> ExitCode {
                 print_help();
                 return ExitCode::from(2);
             }
-            materialize(&promise_path, &target_dir, conflict_policy)
+            materialize(&promise_path, &target_dir, conflict_policy, show_progress)
         }
         Some("-h") | Some("--help") | Some("help") => {
             print_help();
@@ -82,6 +92,7 @@ fn materialize(
     promise_path: &str,
     target_dir: &str,
     conflict_policy: MaterializeConflictPolicy,
+    show_progress: bool,
 ) -> ExitCode {
     let socket_path = match default_control_socket_path() {
         Ok(path) => path,
@@ -105,12 +116,18 @@ fn materialize(
         }
     };
 
-    match materialize_file(
+    match materialize_file_with_progress(
         &socket_path,
         MaterializeRequest {
             source_path,
             target_dir,
             conflict_policy,
+        },
+        |progress| {
+            if show_progress {
+                eprintln!("{}", progress.encode_text());
+            }
+            Ok(())
         },
     ) {
         Ok(response) => {
@@ -216,5 +233,5 @@ fn print_help() {
     println!("commands:");
     println!("  status    Query the user-session daemon status");
     println!("  list      List daemon-owned promises and nodes");
-    println!("  materialize [--overwrite|--rename] <promise-path> <target-dir>");
+    println!("  materialize [--progress] [--overwrite|--rename] <promise-path> <target-dir>");
 }
