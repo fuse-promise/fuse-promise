@@ -188,6 +188,13 @@ pub struct ProviderReadPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoalescedProviderReadPlan {
+    pub provider: ProviderReadPlan,
+    pub response_offset: u32,
+    pub response_length: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MaterializedReadPlan {
     pub path: PathBuf,
     pub offset: u64,
@@ -734,6 +741,60 @@ impl Runtime {
             offset,
             length,
         }))
+    }
+
+    pub fn plan_coalesced_provider_read(
+        &self,
+        plan: &ProviderReadPlan,
+    ) -> Result<CoalescedProviderReadPlan> {
+        let Some(chunk_size) = self.cache_policy.chunk_size() else {
+            return Ok(CoalescedProviderReadPlan {
+                provider: plan.clone(),
+                response_offset: 0,
+                response_length: plan.length,
+            });
+        };
+
+        let tree = self.promise(&plan.promise_id).ok_or(Status::NotFound)?;
+        let node = tree.get(&plan.relative_path).ok_or(Status::NotFound)?;
+        if node.kind != NodeKind::File {
+            return Err(Status::InvalidArgument);
+        }
+
+        let chunk_start = chunk_base(plan.offset, chunk_size);
+        let chunk_end = chunk_start
+            .checked_add(u64::from(chunk_size))
+            .ok_or(Status::InvalidArgument)?;
+        let request_end = plan
+            .offset
+            .checked_add(u64::from(plan.length))
+            .ok_or(Status::InvalidArgument)?;
+        if request_end > chunk_end {
+            return Ok(CoalescedProviderReadPlan {
+                provider: plan.clone(),
+                response_offset: 0,
+                response_length: plan.length,
+            });
+        }
+
+        let remaining = node.attr.size.saturating_sub(chunk_start);
+        let length = u64::from(chunk_size).min(remaining);
+        let length = u32::try_from(length).map_err(|_| Status::InvalidArgument)?;
+        let response_offset =
+            u32::try_from(plan.offset - chunk_start).map_err(|_| Status::InvalidArgument)?;
+
+        Ok(CoalescedProviderReadPlan {
+            provider: ProviderReadPlan {
+                provider_id: plan.provider_id,
+                promise_id: plan.promise_id.clone(),
+                relative_path: plan.relative_path.clone(),
+                provider_node_id: plan.provider_node_id.clone(),
+                offset: chunk_start,
+                length,
+            },
+            response_offset,
+            response_length: plan.length,
+        })
     }
 
     pub fn register_provider(&mut self) -> ProviderId {
@@ -1557,6 +1618,60 @@ mod tests {
                 .plan_sequential_prefetch("promise-1", "docs/readme.txt", 8, 4)
                 .unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn read_through_coalesces_provider_reads_to_cache_chunk() {
+        let (mut runtime, provider) = runtime_with_file();
+        runtime
+            .set_cache_policy(CachePolicy::read_through(8).unwrap())
+            .unwrap();
+        let exact = ProviderReadPlan {
+            provider_id: provider,
+            promise_id: "promise-1".to_owned(),
+            relative_path: "docs/readme.txt".to_owned(),
+            provider_node_id: "remote-file-1".to_owned(),
+            offset: 2,
+            length: 3,
+        };
+
+        assert_eq!(
+            runtime.plan_coalesced_provider_read(&exact).unwrap(),
+            CoalescedProviderReadPlan {
+                provider: ProviderReadPlan {
+                    provider_id: provider,
+                    promise_id: "promise-1".to_owned(),
+                    relative_path: "docs/readme.txt".to_owned(),
+                    provider_node_id: "remote-file-1".to_owned(),
+                    offset: 0,
+                    length: 8,
+                },
+                response_offset: 2,
+                response_length: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn no_cache_keeps_provider_reads_exact() {
+        let (runtime, provider) = runtime_with_file();
+        let exact = ProviderReadPlan {
+            provider_id: provider,
+            promise_id: "promise-1".to_owned(),
+            relative_path: "docs/readme.txt".to_owned(),
+            provider_node_id: "remote-file-1".to_owned(),
+            offset: 2,
+            length: 3,
+        };
+
+        assert_eq!(
+            runtime.plan_coalesced_provider_read(&exact).unwrap(),
+            CoalescedProviderReadPlan {
+                provider: exact,
+                response_offset: 0,
+                response_length: 3,
+            }
         );
     }
 

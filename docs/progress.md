@@ -406,7 +406,7 @@ semantics.
 - [x] Add optional read-through chunk cache.
 - [x] Track complete and incomplete byte ranges.
 - [x] Add sequential prefetch.
-- [ ] Add read coalescing.
+- [x] Add read coalescing.
 - [x] Add materialized-file passthrough.
 - [ ] Stress test large trees.
 - [ ] Stress test large files and random reads.
@@ -423,6 +423,8 @@ Acceptance:
   cached ranges in read-through mode.
 - Read-through mode prefetches the next sequential range after full provider
   reads.
+- Read-through mode coalesces provider reads to cache chunks while returning
+  only the originally requested bytes to FUSE.
 
 ## Phase 5: Stable System Component
 

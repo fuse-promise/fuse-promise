@@ -156,8 +156,8 @@ read verification is covered by the smoke harness. File and directory subtree
 materialize IPC are implemented for fail-on-conflict behavior. Reads for
 materialized files can use the local materialized path after provider
 disconnect. An opt-in read-through cache can satisfy fully cached ranges after
-provider disconnect; overwrite and rename policies, progress, cancellation,
-and read coalescing are still under development.
+provider disconnect; overwrite and rename policies, progress, and cancellation
+are still under development.
 
 `libfusepromise.so` provider registration uses this private daemon IPC and no
 longer creates authoritative provider sessions in a client-local runtime. Its
@@ -213,8 +213,10 @@ If a file has been fully materialized, the runtime plans reads against the
 stored local materialized path before requiring a live provider.
 If read-through cache mode is enabled, the runtime may return a complete cached
 range before requiring a live provider. Cache misses keep the existing provider
-read path. After a full provider read, the daemon may synchronously prefetch the
-next sequential range and store it in the same read-through cache.
+read path, but the daemon may coalesce provider reads to a cache chunk and reply
+to FUSE with only the originally requested slice. After a full provider read,
+the daemon may synchronously prefetch the next sequential range and store it in
+the same read-through cache.
 
 Until a commit-ready FUSE namespace exists, public commit should return
 `FP_ERR_UNAVAILABLE`. Public materialize supports files and directory subtrees

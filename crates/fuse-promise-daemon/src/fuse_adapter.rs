@@ -32,7 +32,11 @@ struct PromiseFilesystem {
 
 #[cfg(feature = "fuse-mount")]
 enum FuseReadPlan {
-    Provider(ProviderReadRequest),
+    Provider {
+        request: ProviderReadRequest,
+        response_offset: u32,
+        response_length: u32,
+    },
     Materialized {
         path: PathBuf,
         offset: u64,
@@ -188,21 +192,30 @@ impl fuser::Filesystem for PromiseFilesystem {
         };
 
         match read_plan {
-            FuseReadPlan::Provider(request) => {
-                match self.state.route_provider_read(request.clone()) {
-                    Ok(response) if response.status == ProviderReadStatus::Ok => {
-                        match self.record_cached_read(&request, &response.bytes) {
-                            Ok(()) => {
-                                self.prefetch_after_provider_read(&request, response.bytes.len());
-                                reply.data(&response.bytes)
+            FuseReadPlan::Provider {
+                request,
+                response_offset,
+                response_length,
+            } => match self.state.route_provider_read(request.clone()) {
+                Ok(response) if response.status == ProviderReadStatus::Ok => {
+                    match self.record_cached_read(&request, &response.bytes) {
+                        Ok(()) => {
+                            self.prefetch_after_provider_read(&request, response.bytes.len());
+                            match provider_reply_bytes(
+                                &response.bytes,
+                                response_offset,
+                                response_length,
+                            ) {
+                                Ok(bytes) => reply.data(bytes),
+                                Err(errno) => reply.error(errno),
                             }
-                            Err(errno) => reply.error(errno),
                         }
+                        Err(errno) => reply.error(errno),
                     }
-                    Ok(response) => reply.error(provider_status_to_errno(response.status)),
-                    Err(error) => reply.error(io_error_to_errno(&error)),
                 }
-            }
+                Ok(response) => reply.error(provider_status_to_errno(response.status)),
+                Err(error) => reply.error(io_error_to_errno(&error)),
+            },
             FuseReadPlan::Materialized {
                 path,
                 offset,
@@ -271,15 +284,24 @@ impl PromiseFilesystem {
 
         match read_plan {
             ReadPlan::Eof => Ok(None),
-            ReadPlan::Request(plan) => Ok(Some(FuseReadPlan::Provider(ProviderReadRequest {
-                request_id: self.state.next_provider_read_request_id(),
-                provider_id: plan.provider_id.raw(),
-                promise_id: plan.promise_id,
-                relative_path: plan.relative_path,
-                provider_node_id: plan.provider_node_id,
-                offset: plan.offset,
-                length: plan.length,
-            }))),
+            ReadPlan::Request(plan) => {
+                let plan = runtime
+                    .plan_coalesced_provider_read(&plan)
+                    .map_err(status_to_errno)?;
+                Ok(Some(FuseReadPlan::Provider {
+                    request: ProviderReadRequest {
+                        request_id: self.state.next_provider_read_request_id(),
+                        provider_id: plan.provider.provider_id.raw(),
+                        promise_id: plan.provider.promise_id,
+                        relative_path: plan.provider.relative_path,
+                        provider_node_id: plan.provider.provider_node_id,
+                        offset: plan.provider.offset,
+                        length: plan.provider.length,
+                    },
+                    response_offset: plan.response_offset,
+                    response_length: plan.response_length,
+                }))
+            }
             ReadPlan::Materialized(plan) => Ok(Some(FuseReadPlan::Materialized {
                 path: plan.path,
                 offset: plan.offset,
@@ -346,6 +368,26 @@ impl PromiseFilesystem {
             let _ = self.record_cached_read(&prefetch_request, &response.bytes);
         }
     }
+}
+
+#[cfg(feature = "fuse-mount")]
+fn provider_reply_bytes(
+    bytes: &[u8],
+    response_offset: u32,
+    response_length: u32,
+) -> Result<&[u8], fuser::Errno> {
+    let start = response_offset as usize;
+    let length = response_length as usize;
+    if start == 0 && bytes.len() <= length {
+        return Ok(bytes);
+    }
+
+    let end = start.checked_add(length).ok_or(fuser::Errno::EIO)?;
+    if end > bytes.len() {
+        return Err(fuser::Errno::EIO);
+    }
+
+    Ok(&bytes[start..end])
 }
 
 #[cfg(feature = "fuse-mount")]

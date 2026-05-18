@@ -241,11 +241,11 @@ IPC and returns `FP_ERR_UNAVAILABLE` until the daemon reports a commit-ready
 FUSE namespace. When commit-ready, the daemon owns the namespace and may return
 the visible Promise path. `fp_materialize()` supports file and directory
 subtree materialize with `FP_CONFLICT_FAIL`; overwrite/rename policies,
-progress, cancellation, and read coalescing remain under development.
-Materialized files can satisfy later reads through their local materialized
-paths, and an opt-in daemon read-through cache can prefetch sequential ranges
-and satisfy fully cached ranges without changing the public C ABI. The public
-library must not fabricate visible FUSE paths from client-local state.
+progress, and cancellation remain under development. Materialized files can
+satisfy later reads through their local materialized paths, and an opt-in daemon
+read-through cache can coalesce reads, prefetch sequential ranges, and satisfy
+fully cached ranges without changing the public C ABI. The public library must
+not fabricate visible FUSE paths from client-local state.
 
 ## String and Buffer Rules
 

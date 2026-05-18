@@ -31,10 +31,10 @@ and `tests/read-through-cache-smoke.sh`; they cover `fpctl status`,
 materialize, directory materialize, provider-gone read errors, and the optional
 read-through cache mode.
 File and directory subtree materialize are implemented for the
-fail-on-conflict policy; overwrite/rename policies, progress, cancellation,
-and read coalescing remain under development. The runtime exposes
-`cache_policy=no-cache` by default through `fpctl status`; an opt-in daemon
-`--cache=read-through` mode stores complete read ranges in memory and
+fail-on-conflict policy; overwrite/rename policies, progress, and cancellation
+remain under development. The runtime exposes `cache_policy=no-cache` by
+default through `fpctl status`; an opt-in daemon `--cache=read-through` mode
+coalesces reads into cache chunks, stores complete read ranges in memory, and
 prefetches the next sequential range. Reads for completely materialized files
 can use the local materialized path after the provider disconnects. Private
 metadata commit is gated on commit readiness so disabled, unmounted, or
@@ -53,8 +53,8 @@ The first implementation target is a read-only Promise filesystem MVP:
 - Support `stat`, `readdir`, `open`, and offset-based `read`.
 - Route reads to provider callbacks.
 
-Overwrite/rename conflict policies, progress reporting, cancellation,
-read coalescing policy, and distribution packaging remain later phases.
+Overwrite/rename conflict policies, progress reporting, cancellation, and
+distribution packaging remain later phases.
 
 ## Why
 

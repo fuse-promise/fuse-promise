@@ -359,8 +359,8 @@ The first read-only MVP default is no-cache. This is an explicit runtime
 `CachePolicy::NoCache` value and is observable as `cache_policy=no-cache`
 through `fpctl status`. The daemon can opt into an in-memory read-through cache
 with `--cache=read-through`; this does not add a public C ABI option. In this
-mode, the daemon performs synchronous one-range sequential prefetch after a
-full provider read.
+mode, the daemon coalesces provider reads to cache chunks and performs
+synchronous one-range sequential prefetch after a full provider read.
 
 Later cache work must preserve visible Promise semantics:
 
@@ -378,6 +378,9 @@ Later cache work must preserve visible Promise semantics:
   does not actively populate the read-through cache.
 - Prefetch is an internal daemon optimization and must not change the default
   no-cache provider read ranges.
+- Read coalescing is also internal to read-through mode: FUSE receives only the
+  originally requested bytes even when the provider sees a larger cache fill
+  request.
 
 Do not add cache dependencies until the no-cache read and materialize paths are
 correct.

@@ -126,16 +126,16 @@ grep -q '^cache_policy=read-through$' "$work_dir/status.out" \
 first_chunk=$(dd if="$cached_path" bs=1 count=4 status=none)
 [ "$first_chunk" = "abcd" ] || fail "first sequential read returned unexpected data: $first_chunk"
 read_count=$(wc -l < "$read_log")
-[ "$read_count" -ge 2 ] || fail "first read did not trigger sequential prefetch"
-grep -Eq '^READ offset=[1-9][0-9]* ' "$read_log" \
-    || fail "sequential prefetch did not request the next range"
+[ "$read_count" = 1 ] || fail "first read was not coalesced into one provider request"
+grep -q '^READ offset=0 length=37$' "$read_log" \
+    || fail "first read did not coalesce to the full cache chunk"
 
 second_chunk=$(dd if="$cached_path" bs=1 skip=4 count=8 status=none)
 [ "$second_chunk" = "efghijkl" ] \
     || fail "second sequential read returned unexpected data: $second_chunk"
 second_read_count=$(wc -l < "$read_log")
 [ "$second_read_count" = "$read_count" ] \
-    || fail "prefetched cache hit still reached provider"
+    || fail "coalesced cache hit still reached provider"
 
 kill "$provider_pid"
 wait "$provider_pid" || true
