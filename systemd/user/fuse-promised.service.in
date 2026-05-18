@@ -1,0 +1,10 @@
+[Unit]
+Description=fuse-promise user-session daemon
+
+[Service]
+Type=simple
+ExecStart=@bindir@/fuse-promised --foreground
+Restart=no
+
+[Install]
+WantedBy=default.target

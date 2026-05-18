@@ -93,6 +93,7 @@ Typical install shape:
 
 ```text
 /usr/include/fuse-promise/fuse-promise.h
+/usr/lib/libfusepromise.so.0
 /usr/lib/libfusepromise.so
 /usr/lib/pkgconfig/fuse-promise.pc
 /usr/lib/systemd/user/fuse-promised.service
@@ -157,8 +158,9 @@ crates/fuse-promise-ipc/             private daemon IPC helpers
 crates/fuse-promise-ffi/             libfusepromise C ABI implementation
 crates/fuse-promise-daemon/          fuse-promised daemon entry point
 tools/fpctl/                         administrative CLI
+scripts/install-dev.sh               developer install helper
 pkgconfig/fuse-promise.pc.in         pkg-config template
-systemd/user/fuse-promised.service   placeholder user service template
+systemd/user/fuse-promised.service.in user service template
 ```
 
 ## Repository Description

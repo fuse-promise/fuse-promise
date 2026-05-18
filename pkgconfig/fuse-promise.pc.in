@@ -1,7 +1,7 @@
 prefix=@prefix@
 exec_prefix=${prefix}
-includedir=${prefix}/include
-libdir=${exec_prefix}/lib
+includedir=@includedir@
+libdir=@libdir@
 
 Name: fuse-promise
 Description: Linux user-space Promise filesystem runtime

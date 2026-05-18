@@ -380,15 +380,18 @@ tests/abi-hardening.sh
 ### G3.4 Install Metadata
 
 - [x] Generate `fuse-promise.pc` from `pkgconfig/fuse-promise.pc.in`.
-- [ ] Install public header.
-- [ ] Install `libfusepromise.so`.
-- [ ] Define soname/version policy.
-- [ ] Install `fuse-promised` and `fpctl`.
-- [ ] Keep systemd user service aligned with install paths.
+- [x] Install public header.
+- [x] Install `libfusepromise.so`.
+- [x] Define soname/version policy.
+- [x] Install `fuse-promised` and `fpctl`.
+- [x] Keep systemd user service aligned with install paths.
 
 Acceptance:
 
 ```sh
+PREFIX="$(mktemp -d)" scripts/install-dev.sh
+PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig" pkg-config --cflags --libs fuse-promise
+tests/install-metadata.sh
 pkg-config --cflags --libs fuse-promise
 cc example.c $(pkg-config --cflags --libs fuse-promise)
 ```

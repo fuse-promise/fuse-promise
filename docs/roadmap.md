@@ -17,8 +17,8 @@ For fixed implementation dependency and sequencing decisions, see
   points, daemon entry point, and `fpctl status`.
 - Fix the first implementation dependency set, crate ownership boundaries, and
   framework build order before expanding runtime logic.
-- Keep pkg-config and systemd files as placeholders until an install/build
-  system generates and installs them.
+- Add developer install metadata that generates pkg-config and systemd user
+  service files from templates.
 
 ## Phase 1: Read-Only MVP
 

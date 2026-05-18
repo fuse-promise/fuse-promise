@@ -6,6 +6,7 @@ repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 cc_bin=${CC:-cc}
 pkg_config_bin=${PKG_CONFIG:-pkg-config}
 nm_bin=${NM:-nm}
+readelf_bin=${READELF:-readelf}
 
 fail() {
     echo "error: $*" >&2
@@ -16,6 +17,7 @@ command -v cargo >/dev/null || fail "cargo is required"
 command -v "$cc_bin" >/dev/null || fail "cc is required"
 command -v "$pkg_config_bin" >/dev/null || fail "pkg-config is required"
 command -v "$nm_bin" >/dev/null || fail "nm is required"
+command -v "$readelf_bin" >/dev/null || fail "readelf is required"
 
 work_dir=$(mktemp -d)
 cleanup() {
@@ -30,11 +32,17 @@ cd "$repo_dir"
 cargo build -p fuse-promise-ffi --locked
 
 cp include/fuse-promise/fuse-promise.h "$prefix/include/fuse-promise/fuse-promise.h"
-cp target/debug/libfusepromise.so "$prefix/lib/libfusepromise.so"
+cp target/debug/libfusepromise.so "$prefix/lib/libfusepromise.so.0"
+ln -sfn libfusepromise.so.0 "$prefix/lib/libfusepromise.so"
+"$readelf_bin" -d "$prefix/lib/libfusepromise.so.0" \
+    | grep -q 'SONAME.*libfusepromise.so.0' \
+    || fail "shared library SONAME is not libfusepromise.so.0"
 
 version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
 [ -n "$version" ] || fail "could not read workspace version"
 sed -e "s|@prefix@|$prefix|g" -e "s|@version@|$version|g" \
+    -e "s|@includedir@|$prefix/include|g" \
+    -e "s|@libdir@|$prefix/lib|g" \
     pkgconfig/fuse-promise.pc.in > "$prefix/lib/pkgconfig/fuse-promise.pc"
 
 export PKG_CONFIG_PATH="$prefix/lib/pkgconfig"
