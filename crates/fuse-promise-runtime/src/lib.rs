@@ -147,6 +147,38 @@ pub struct ProviderReadPlan {
     pub length: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeEntry {
+    MountRoot,
+    PromiseNode {
+        promise_id: String,
+        node: PromiseNode,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryEntry {
+    pub name: String,
+    pub inode: u64,
+    pub kind: NodeKind,
+}
+
+impl RuntimeEntry {
+    pub fn inode(&self) -> u64 {
+        match self {
+            RuntimeEntry::MountRoot => FUSE_ROOT_INODE,
+            RuntimeEntry::PromiseNode { node, .. } => node.inode,
+        }
+    }
+
+    pub fn kind(&self) -> NodeKind {
+        match self {
+            RuntimeEntry::MountRoot => NodeKind::Directory,
+            RuntimeEntry::PromiseNode { node, .. } => node.kind,
+        }
+    }
+}
+
 impl PromiseTree {
     pub fn get(&self, relative_path: &str) -> Option<&PromiseNode> {
         normalize_relative_path(relative_path)
@@ -365,6 +397,106 @@ impl Runtime {
         self.promises.get(promise_id)
     }
 
+    pub fn lookup_inode(&self, inode: u64) -> Result<RuntimeEntry> {
+        if inode == FUSE_ROOT_INODE {
+            return Ok(RuntimeEntry::MountRoot);
+        }
+
+        self.promises
+            .values()
+            .find_map(|tree| {
+                tree.nodes.values().find_map(|node| {
+                    (node.inode == inode).then(|| RuntimeEntry::PromiseNode {
+                        promise_id: tree.promise_id.clone(),
+                        node: node.clone(),
+                    })
+                })
+            })
+            .ok_or(Status::NotFound)
+    }
+
+    pub fn lookup_child(&self, parent_inode: u64, name: &str) -> Result<RuntimeEntry> {
+        validate_child_name(name)?;
+
+        if parent_inode == FUSE_ROOT_INODE {
+            let tree = self.promise(name).ok_or(Status::NotFound)?;
+            let node = tree.nodes.get("").ok_or(Status::NotFound)?;
+            return Ok(RuntimeEntry::PromiseNode {
+                promise_id: tree.promise_id.clone(),
+                node: node.clone(),
+            });
+        }
+
+        let RuntimeEntry::PromiseNode {
+            promise_id,
+            node: parent,
+        } = self.lookup_inode(parent_inode)?
+        else {
+            unreachable!("mount root was handled before inode lookup");
+        };
+        if parent.kind != NodeKind::Directory {
+            return Err(Status::InvalidArgument);
+        }
+
+        let tree = self.promise(&promise_id).ok_or(Status::NotFound)?;
+        let child_relative_path = child_path(&parent.relative_path, name);
+        if !tree
+            .children
+            .get(&parent.relative_path)
+            .is_some_and(|children| children.contains(&child_relative_path))
+        {
+            return Err(Status::NotFound);
+        }
+
+        let child = tree
+            .nodes
+            .get(&child_relative_path)
+            .ok_or(Status::NotFound)?;
+        Ok(RuntimeEntry::PromiseNode {
+            promise_id,
+            node: child.clone(),
+        })
+    }
+
+    pub fn read_dir(&self, inode: u64) -> Result<Vec<DirectoryEntry>> {
+        if inode == FUSE_ROOT_INODE {
+            return self
+                .promises
+                .values()
+                .map(|tree| {
+                    let root = tree.nodes.get("").ok_or(Status::NotFound)?;
+                    Ok(DirectoryEntry {
+                        name: tree.promise_id.clone(),
+                        inode: root.inode,
+                        kind: NodeKind::Directory,
+                    })
+                })
+                .collect();
+        }
+
+        let RuntimeEntry::PromiseNode { promise_id, node } = self.lookup_inode(inode)? else {
+            unreachable!("mount root was handled before inode lookup");
+        };
+        if node.kind != NodeKind::Directory {
+            return Err(Status::InvalidArgument);
+        }
+
+        let tree = self.promise(&promise_id).ok_or(Status::NotFound)?;
+        tree.children
+            .get(&node.relative_path)
+            .ok_or(Status::NotFound)?
+            .iter()
+            .map(|child_path| {
+                let child = tree.nodes.get(child_path).ok_or(Status::NotFound)?;
+                Ok(DirectoryEntry {
+                    name: child.name.clone(),
+                    inode: child.inode,
+                    kind: child.kind,
+                })
+            })
+            .collect()
+    }
+
     pub fn plan_read(
         &self,
         promise_id: &str,
@@ -524,6 +656,25 @@ fn leaf_name(path: &str) -> &str {
     path.rsplit_once('/').map_or(path, |(_, name)| name)
 }
 
+fn validate_child_name(name: &str) -> Result<()> {
+    if name.is_empty() || name == "." || name == ".." {
+        return Err(Status::InvalidArgument);
+    }
+    if name.as_bytes().contains(&0) || name.contains('/') {
+        return Err(Status::InvalidArgument);
+    }
+
+    Ok(())
+}
+
+fn child_path(parent: &str, name: &str) -> String {
+    if parent.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{parent}/{name}")
+    }
+}
+
 fn validate_attr(kind: NodeKind, attr: NodeAttr) -> Result<()> {
     if attr.mode & !0o7777 != 0 {
         return Err(Status::InvalidArgument);
@@ -639,6 +790,59 @@ mod tests {
 
         assert_eq!(node_ids, BTreeSet::from([1, 2, 3, 4, 5, 6]));
         assert_eq!(inodes, BTreeSet::from([2, 3, 4, 5, 6, 7]));
+    }
+
+    #[test]
+    fn resolves_runtime_entries_by_inode_and_child_name() {
+        let (runtime, _) = runtime_with_file();
+
+        let root_entries = runtime.read_dir(FUSE_ROOT_INODE).unwrap();
+        assert_eq!(root_entries.len(), 1);
+        assert_eq!(root_entries[0].name, "promise-1");
+        assert_eq!(root_entries[0].kind, NodeKind::Directory);
+
+        let RuntimeEntry::PromiseNode {
+            promise_id,
+            node: promise_root,
+        } = runtime.lookup_child(FUSE_ROOT_INODE, "promise-1").unwrap()
+        else {
+            panic!("promise id lookup should return a promise node");
+        };
+        assert_eq!(promise_id, "promise-1");
+        assert_eq!(promise_root.relative_path, "");
+
+        let RuntimeEntry::PromiseNode { node: docs, .. } =
+            runtime.lookup_child(promise_root.inode, "docs").unwrap()
+        else {
+            panic!("directory lookup should return a promise node");
+        };
+        assert_eq!(docs.relative_path, "docs");
+        assert_eq!(docs.kind, NodeKind::Directory);
+
+        let docs_entries = runtime.read_dir(docs.inode).unwrap();
+        assert_eq!(
+            docs_entries,
+            vec![DirectoryEntry {
+                name: "readme.txt".to_owned(),
+                inode: 4,
+                kind: NodeKind::File,
+            }]
+        );
+
+        let RuntimeEntry::PromiseNode { node: file, .. } =
+            runtime.lookup_child(docs.inode, "readme.txt").unwrap()
+        else {
+            panic!("file lookup should return a promise node");
+        };
+        assert_eq!(
+            runtime.lookup_inode(file.inode).unwrap().inode(),
+            file.inode
+        );
+        assert_eq!(runtime.read_dir(file.inode), Err(Status::InvalidArgument));
+        assert_eq!(
+            runtime.lookup_child(FUSE_ROOT_INODE, "bad/name"),
+            Err(Status::InvalidArgument)
+        );
     }
 
     #[test]
