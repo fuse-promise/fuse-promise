@@ -482,6 +482,7 @@ Acceptance:
 - [x] Provide distribution packaging guidelines.
 - [x] Provide build instructions.
 - [x] Provide changelog.
+- [x] Provide developer-preview release notes.
 - [~] Prepare stable release notes.
 - [x] Document visible filesystem layout.
 - [~] Prepare first stable ABI release.

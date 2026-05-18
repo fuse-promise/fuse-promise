@@ -74,5 +74,7 @@ The first stable ABI release remains blocked until these are resolved:
 ## Versioning Rule
 
 Until this checklist is complete, `0.1.0` remains a developer-preview release.
-After the checklist is complete, the release notes must state which public ABI
-elements are stable and which values are reserved for future expansion.
+Its developer-preview notes live in `docs/release-notes-0.1.0.md`.
+After the stable checklist is complete, the stable release notes must state
+which public ABI elements are stable and which values are reserved for future
+expansion.

@@ -157,6 +157,7 @@ Those projects should live outside this repository and use the public API.
 - [Security](docs/security.md)
 - [Packaging](docs/packaging.md)
 - [Stable ABI Release Readiness](docs/stable-abi-release.md)
+- [0.1.0 Developer Preview Release Notes](docs/release-notes-0.1.0.md)
 - [Development Style](docs/development-style.md)
 - [Roadmap](docs/roadmap.md)
 - [Progress Goals](docs/progress.md)
