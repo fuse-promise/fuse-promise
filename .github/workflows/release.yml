@@ -219,6 +219,16 @@ jobs:
           SOURCE_REF: ${{ env.RELEASE_TAG }}
         run: scripts/package-source.sh
 
+      - name: Select release notes
+        id: release-notes
+        run: |
+          version=${RELEASE_TAG#v}
+          notes_file="docs/release-notes-$version.md"
+          if [ ! -f "$notes_file" ]; then
+            notes_file="docs/release-notes-stable.md"
+          fi
+          echo "path=$notes_file" >> "$GITHUB_OUTPUT"
+
       - name: Upload complete release artifact bundle
         uses: actions/upload-artifact@v7
         with:
@@ -242,7 +252,7 @@ jobs:
           else
             gh release create "$RELEASE_TAG" dist/* \
               --title "$RELEASE_TAG" \
-              --notes-file docs/release-notes-stable.md \
+              --notes-file "${{ steps.release-notes.outputs.path }}" \
               --verify-tag
           fi
 

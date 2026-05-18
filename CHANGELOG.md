@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.1 - 2026-05-18
+
+Packaging and release automation update:
+
+- Add GitHub Actions release automation for GitHub Release assets.
+- Build DEB/RPM artifacts for `amd64`/`x86_64` and `arm64`/`aarch64`.
+- Add formal source tarball and `SHA256SUMS` release assets.
+- Keep Cloudsmith package repository publishing gated on mounted FUSE tests.
+
+The public C ABI remains compatible with `1.0.0` and keeps the
+`libfusepromise.so.1` soname-major.
+
 ## 1.0.0 - 2026-05-18
 
 First stable ABI release:
