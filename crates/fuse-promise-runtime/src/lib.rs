@@ -5,6 +5,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 pub const API_VERSION: u32 = 1;
+pub const FUSE_ROOT_INODE: u64 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -290,6 +291,8 @@ impl PromiseBuilder {
 pub struct Runtime {
     next_provider_id: u64,
     next_promise_id: u64,
+    next_node_id: u64,
+    next_inode: u64,
     providers: BTreeMap<ProviderId, ProviderSession>,
     promises: BTreeMap<String, PromiseTree>,
 }
@@ -299,6 +302,8 @@ impl Runtime {
         Self {
             next_provider_id: 1,
             next_promise_id: 1,
+            next_node_id: 1,
+            next_inode: FUSE_ROOT_INODE + 1,
             providers: BTreeMap::new(),
             promises: BTreeMap::new(),
         }
@@ -350,7 +355,8 @@ impl Runtime {
         let promise_id = format!("promise-{}", self.next_promise_id);
         self.next_promise_id += 1;
 
-        let tree = builder.finish(promise_id.clone());
+        let mut tree = builder.finish(promise_id.clone());
+        self.assign_runtime_ids(&mut tree)?;
         self.promises.insert(promise_id, tree.clone());
         Ok(tree)
     }
@@ -409,6 +415,33 @@ impl Runtime {
 
     pub fn promise_count(&self) -> usize {
         self.promises.len()
+    }
+
+    fn assign_runtime_ids(&mut self, tree: &mut PromiseTree) -> Result<()> {
+        for node in tree.nodes.values_mut() {
+            node.node_id = self.allocate_node_id()?;
+            node.inode = self.allocate_inode()?;
+        }
+
+        Ok(())
+    }
+
+    fn allocate_node_id(&mut self) -> Result<NodeId> {
+        let raw = self.next_node_id;
+        self.next_node_id = self
+            .next_node_id
+            .checked_add(1)
+            .ok_or(Status::InvalidArgument)?;
+        Ok(NodeId(raw))
+    }
+
+    fn allocate_inode(&mut self) -> Result<u64> {
+        let raw = self.next_inode;
+        self.next_inode = self
+            .next_inode
+            .checked_add(1)
+            .ok_or(Status::InvalidArgument)?;
+        Ok(raw)
     }
 }
 
@@ -583,6 +616,32 @@ mod tests {
     }
 
     #[test]
+    fn commit_assigns_daemon_global_node_ids_and_inodes() {
+        let mut runtime = Runtime::new();
+        let provider = runtime.register_provider();
+
+        let first = runtime
+            .commit_promise(sample_file_builder(provider, "remote-file-1"))
+            .unwrap();
+        let second = runtime
+            .commit_promise(sample_file_builder(provider, "remote-file-2"))
+            .unwrap();
+
+        let mut node_ids = BTreeSet::new();
+        let mut inodes = BTreeSet::new();
+        for tree in [&first, &second] {
+            for node in tree.nodes.values() {
+                assert!(node_ids.insert(node.node_id.raw()));
+                assert!(inodes.insert(node.inode));
+                assert_ne!(node.inode, FUSE_ROOT_INODE);
+            }
+        }
+
+        assert_eq!(node_ids, BTreeSet::from([1, 2, 3, 4, 5, 6]));
+        assert_eq!(inodes, BTreeSet::from([2, 3, 4, 5, 6, 7]));
+    }
+
+    #[test]
     fn commit_fails_after_provider_unregisters() {
         let mut runtime = Runtime::new();
         let provider = runtime.register_provider();
@@ -732,19 +791,20 @@ mod tests {
     fn runtime_with_file() -> (Runtime, ProviderId) {
         let mut runtime = Runtime::new();
         let provider = runtime.register_provider();
+        let builder = sample_file_builder(provider, "remote-file-1");
+        runtime.commit_promise(builder).unwrap();
+
+        (runtime, provider)
+    }
+
+    fn sample_file_builder(provider: ProviderId, remote_file: &str) -> PromiseBuilder {
         let mut builder = PromiseBuilder::new(provider);
         builder
             .add_dir("docs", NodeAttr::new(0o755, 0, 0), "remote-dir-1")
             .unwrap();
         builder
-            .add_file(
-                "docs/readme.txt",
-                NodeAttr::new(0o644, 12, 0),
-                "remote-file-1",
-            )
+            .add_file("docs/readme.txt", NodeAttr::new(0o644, 12, 0), remote_file)
             .unwrap();
-        runtime.commit_promise(builder).unwrap();
-
-        (runtime, provider)
+        builder
     }
 }
