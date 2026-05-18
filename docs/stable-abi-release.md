@@ -32,18 +32,12 @@ The stable release must not freeze:
 Run these before declaring the ABI stable:
 
 ```sh
-cargo fmt --check --all
-cargo check --workspace --locked
-cargo test --workspace --locked
-BUILD_PROFILE=release SONAME_MAJOR=1 tests/abi-hardening.sh
-BUILD_PROFILE=release SONAME_MAJOR=1 tests/install-metadata.sh
-tests/read-only-mvp-smoke.sh
-tests/read-through-cache-smoke.sh
-tests/performance-stress.sh
-tests/control-socket-security.sh
-tests/materialize-security.sh
-git diff --check
+tests/stable-release-gates.sh
 ```
+
+`tests/stable-release-gates.sh` defaults to `BUILD_PROFILE=release` and
+`SONAME_MAJOR=1`, then runs the workspace, ABI, install, FUSE, cache,
+performance, security, materialize, and whitespace gates.
 
 The FUSE gates require libfuse3 development metadata, `/dev/fuse`, and
 `fusermount3`.
@@ -54,6 +48,7 @@ The first stable ABI release remains blocked until these are resolved:
 
 - Re-run ABI hardening against the exact release build artifact with
   `BUILD_PROFILE=release SONAME_MAJOR=1 tests/abi-hardening.sh`.
+- Run the full stable release gate with `tests/stable-release-gates.sh`.
 - Set the final stable release version and date in the changelog and stable
   release notes.
 - Tag the release only after the installed header, pkg-config metadata, soname,

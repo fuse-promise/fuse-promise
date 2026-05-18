@@ -17,6 +17,10 @@ command -v "$cc_bin" >/dev/null || fail "cc is required"
 command -v "$pkg_config_bin" >/dev/null || fail "pkg-config is required"
 command -v "$readelf_bin" >/dev/null || fail "readelf is required"
 
+# Install metadata checks generate host-local temporary .pc files. A
+# caller-provided pkg-config sysroot would rewrite those temporary prefixes.
+unset PKG_CONFIG_SYSROOT_DIR
+
 work_dir=$(mktemp -d)
 cleanup() {
     rm -rf "$work_dir"

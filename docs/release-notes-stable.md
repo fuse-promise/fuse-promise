@@ -40,17 +40,7 @@ against the exact release artifact.
 The stable release artifact must pass:
 
 ```sh
-cargo fmt --check --all
-cargo check --workspace --locked
-cargo test --workspace --locked
-BUILD_PROFILE=release SONAME_MAJOR=1 tests/abi-hardening.sh
-BUILD_PROFILE=release SONAME_MAJOR=1 tests/install-metadata.sh
-tests/read-only-mvp-smoke.sh
-tests/read-through-cache-smoke.sh
-tests/performance-stress.sh
-tests/control-socket-security.sh
-tests/materialize-security.sh
-git diff --check
+tests/stable-release-gates.sh
 ```
 
 The FUSE gates require libfuse3 development metadata, `/dev/fuse`, and

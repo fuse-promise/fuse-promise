@@ -38,6 +38,11 @@ command -v "$pkg_config_bin" >/dev/null || fail "pkg-config is required"
 command -v "$nm_bin" >/dev/null || fail "nm is required"
 command -v "$readelf_bin" >/dev/null || fail "readelf is required"
 
+# This script generates a host-local temporary .pc file. A caller-provided
+# pkg-config sysroot is useful for FUSE dependency discovery, but it would
+# rewrite this temporary prefix and make the installed ABI check invalid.
+unset PKG_CONFIG_SYSROOT_DIR
+
 work_dir=$(mktemp -d)
 cleanup() {
     rm -rf "$work_dir"
