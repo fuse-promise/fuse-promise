@@ -182,7 +182,7 @@ jobs:
           FUSE_PROMISE_ARCH: ${{ matrix.package_arch }}
           FUSE_PROMISE_RPM_ARCH: ${{ matrix.rpm_arch }}
           DIST_DIR: dist/${{ matrix.package_arch }}
-        run: scripts/package-linux.sh
+        run: bash scripts/package-linux.sh
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v7
@@ -217,7 +217,7 @@ jobs:
       - name: Build source tarball and checksums
         env:
           SOURCE_REF: ${{ env.RELEASE_TAG }}
-        run: scripts/package-source.sh
+        run: bash scripts/package-source.sh
 
       - name: Select release notes
         id: release-notes
