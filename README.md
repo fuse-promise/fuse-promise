@@ -12,17 +12,18 @@ tool, desktop integration, cloud client, or transport layer.
 
 ## Why This Exists
 
-Windows has platform APIs for this pattern:
-[Cloud Files API](https://learn.microsoft.com/windows/win32/cfapi/cloud-files-api-portal)
-for placeholder files, and
-[Projected File System](https://learn.microsoft.com/windows/win32/projfs/projected-file-system)
-for user-mode providers that project trees into the filesystem. macOS has
-[File Provider](https://developer.apple.com/documentation/fileprovider)
-and dataless files, where metadata can exist locally before content is
-materialized.
+Windows has long exposed this shape through COM data transfer:
+[`IDataObject`](https://learn.microsoft.com/windows/win32/api/objidl/nn-objidl-idataobject)
+describes what data can be provided and retrieves it on demand, while
+[`IStream`](https://learn.microsoft.com/windows/win32/api/objidl/nn-objidl-istream)
+represents byte-oriented reading and writing. macOS has file promises through
+[`NSFilePromiseProvider`](https://developer.apple.com/documentation/appkit/nsfilepromiseprovider),
+where a file can be promised first and written when the promise is fulfilled.
 
 Linux has FUSE, but not a common Promise-file runtime with a stable C ABI.
-`fuse-promise` provides that lower layer for Linux.
+`fuse-promise` provides that lower layer for Linux paths: metadata is published
+first, file bytes are supplied later by a provider callback, and materialize
+writes promised content into local storage.
 
 ## Interface
 
