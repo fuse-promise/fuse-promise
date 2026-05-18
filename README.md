@@ -87,6 +87,12 @@ FUSE-enabled daemon build:
 cargo build -p fuse-promise-daemon --features fuse-mount --locked
 ```
 
+Minimal mounted smoke test:
+
+```sh
+tests/minimal-provider-smoke.sh
+```
+
 Required system packages on Debian/Ubuntu:
 
 ```sh

@@ -14,6 +14,7 @@ cargo check --workspace --locked
 cargo test --workspace --locked
 tests/abi-hardening.sh
 tests/install-metadata.sh
+tests/minimal-provider-smoke.sh
 tests/read-only-mvp-smoke.sh
 tests/read-through-cache-smoke.sh
 tests/performance-stress.sh

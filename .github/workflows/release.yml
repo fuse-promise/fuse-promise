@@ -114,6 +114,7 @@ jobs:
         id: mounted-fuse-gates
         run: |
           if [ -c /dev/fuse ] && command -v fusermount3 >/dev/null 2>&1 && pkg-config --exists fuse3; then
+            BUILD_PROFILE=release SONAME_MAJOR=1 tests/minimal-provider-smoke.sh
             BUILD_PROFILE=release SONAME_MAJOR=1 tests/read-only-mvp-smoke.sh
             BUILD_PROFILE=release SONAME_MAJOR=1 tests/read-through-cache-smoke.sh
             BUILD_PROFILE=release SONAME_MAJOR=1 tests/performance-stress.sh

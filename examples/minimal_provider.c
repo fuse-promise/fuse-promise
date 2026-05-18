@@ -1,10 +1,18 @@
 #include <fuse-promise/fuse-promise.h>
 
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static const char kData[] = "hello from fuse-promise example\n";
+static volatile sig_atomic_t keep_running = 1;
+
+static void stop_provider(int signal_number) {
+    (void)signal_number;
+    keep_running = 0;
+}
 
 static fp_status_t read_file(const fp_read_request_t *request,
                              fp_read_response_t *response,
@@ -45,6 +53,9 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    signal(SIGTERM, stop_provider);
+    signal(SIGINT, stop_provider);
+
     fp_context_options_t options = FP_CONTEXT_OPTIONS_INIT;
     options.runtime_dir = argv[1];
 
@@ -83,8 +94,14 @@ int main(int argc, char **argv) {
     }
 
     printf("%s\n", visible_path);
+    fflush(stdout);
 
     fp_promise_builder_free(builder);
+
+    while (keep_running) {
+        sleep(1);
+    }
+
     fp_provider_unregister(provider);
     fp_context_close(context);
     return 0;
