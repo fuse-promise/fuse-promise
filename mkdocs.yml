@@ -1,0 +1,52 @@
+site_name: fuse-promise
+site_description: Linux user-space Promise filesystem runtime built on FUSE.
+site_url: https://fuse-promise.github.io/fuse-promise/
+repo_url: https://github.com/fuse-promise/fuse-promise
+repo_name: fuse-promise/fuse-promise
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Overview: index.md
+  - Architecture: architecture.md
+  - Public API: public-api.md
+  - Runtime: runtime.md
+  - Promise Model: promise-model.md
+  - Language and ABI: language-and-abi.md
+  - Packaging: packaging.md
+  - Testing: testing.md
+  - Security: security.md
+  - Requirements: requirements.md
+  - Roadmap: roadmap.md
+  - Project Notes:
+      - Project Statement: project-statement.md
+      - Implementation Decisions: implementation-decisions.md
+      - Development Style: development-style.md
+      - Stable ABI Release: stable-abi-release.md
+      - Progress: progress.md
+  - Release Notes:
+      - Stable: release-notes-stable.md
+      - 1.0.2: release-notes-1.0.2.md
+      - 1.0.1: release-notes-1.0.1.md
+      - 0.1.0: release-notes-0.1.0.md

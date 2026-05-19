@@ -1,6 +1,7 @@
 target/
 build/
 dist/
+site/
 *.o
 *.so
 *.a
@@ -11,4 +12,3 @@ dist/
 .cache/
 .vscode/
 .idea/
-

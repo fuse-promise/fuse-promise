@@ -2,6 +2,8 @@
 
 Linux user-space Promise filesystem runtime built on FUSE.
 
+Documentation: <https://fuse-promise.github.io/fuse-promise/>
+
 `fuse-promise` lets a provider publish a filesystem tree before file contents
 exist locally. Metadata is visible immediately through ordinary paths. File
 bytes are supplied on demand when a process reads the file, or written into
