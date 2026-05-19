@@ -79,7 +79,7 @@ docker run --rm \
 
         if [ "$FUSE_PROMISE_FUSE_BACKEND" = "fuse3" ]; then
             python3 -m pip install --user --upgrade "pip<22"
-            python3 -m pip install --user "meson==0.63.3"
+            python3 -m pip install --user "meson==0.61.5"
             export PATH="$HOME/.local/bin:$PATH"
 
             curl -fsSL "$FUSE_PROMISE_LIBFUSE3_SOURCE_URL" -o /tmp/fuse3.tar.gz
