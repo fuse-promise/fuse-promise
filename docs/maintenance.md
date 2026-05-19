@@ -109,6 +109,9 @@ docs/packaging.md
 ```
 
 The release workflow builds DEB and RPM artifacts for both FUSE2 and FUSE3.
+Those package builds run inside `ubuntu:18.04` through
+`scripts/package-linux-bionic-container.sh` so released binaries keep a glibc
+2.27 compatibility floor.
 
 Before changing package names, dependencies, or installed paths, verify:
 

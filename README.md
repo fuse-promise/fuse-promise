@@ -163,7 +163,9 @@ FUSE3 package: fuse3, libfuse3, fusermount3
 FUSE2 package: fuse, libfuse2, fusermount
 ```
 
-Packaged builds target Ubuntu 22.04 or newer by default.
+Release packages are built in an Ubuntu 18.04 container so the GNU/Linux
+binaries use a glibc 2.27 compatibility floor. The GitHub runner host is newer,
+but the package build itself happens in the 18.04 environment.
 
 ## Build and Test
 

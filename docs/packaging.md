@@ -95,6 +95,16 @@ The wrapper stages a release build with:
 DESTDIR=<stage> PREFIX=/usr BUILD_PROFILE=release SONAME_MAJOR=1 DAEMON_FEATURES=<backend-feature> scripts/install-dev.sh
 ```
 
+To reproduce the release compatibility build locally, use Docker:
+
+```sh
+FUSE_PROMISE_FUSE_BACKEND=fuse3 scripts/package-linux-bionic-container.sh
+FUSE_PROMISE_FUSE_BACKEND=fuse DIST_DIR=dist/fuse scripts/package-linux-bionic-container.sh
+```
+
+The container wrapper builds inside `ubuntu:18.04` and writes artifacts to
+`dist/`.
+
 It then writes these artifacts to `dist/`:
 
 ```text
@@ -130,6 +140,12 @@ service paths. They are separate package names and conflict with each other.
 Architecture names differ by package family: Debian uses `amd64` and `arm64`,
 while RPM uses `x86_64` and `aarch64`.
 
+Release packages are built inside an Ubuntu 18.04 container. This sets the
+GNU/Linux binary compatibility floor to glibc 2.27 while still allowing GitHub
+Actions to use current hosted runners. GitHub no longer provides a hosted
+`ubuntu-18.04` runner label, so the release workflow runs on current runners and
+uses Docker for the package build environment.
+
 Distribution names such as Ubuntu Jammy, Ubuntu Noble, Debian Bookworm, EL 9,
 or Fedora are repository metadata targets. They do not always require separate
 binary builds. Build separate distribution packages only when dependency names,
@@ -146,8 +162,8 @@ template:
   runner labeled `linux` and `fuse`, because mounted FUSE tests require
   `/dev/fuse` and a matching `fusermount` helper.
 - `Release` validates the tag, builds FUSE2 and FUSE3 DEB/RPM artifacts for
-  `amd64` and `arm64`, builds a source tarball, uploads them to the GitHub
-  Release, and optionally publishes packages to Cloudsmith.
+  `amd64` and `arm64` inside `ubuntu:18.04`, builds a source tarball, uploads
+  them to the GitHub Release, and optionally publishes packages to Cloudsmith.
 - Cloudsmith repository publishing is gated on the mounted FUSE tests passing.
   If a GitHub-hosted runner lacks `/dev/fuse`, the workflow can still build
   GitHub Release assets, but public apt/yum repository publishing requires a
@@ -172,10 +188,10 @@ Optional repository variables select upload targets:
 
 ```text
 CLOUDSMITH_DEB_DISTRIBUTION    default ubuntu
-CLOUDSMITH_DEB_RELEASE         default any-version
+CLOUDSMITH_DEB_RELEASE         default bionic
 CLOUDSMITH_DEB_COMPONENT       default main
 CLOUDSMITH_RPM_DISTRIBUTION    default el
-CLOUDSMITH_RPM_RELEASE         default 9
+CLOUDSMITH_RPM_RELEASE         default 8
 ```
 
 ## User Service
