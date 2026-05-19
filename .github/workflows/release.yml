@@ -24,6 +24,7 @@ env:
   GO_TOOLCHAIN: "1.25.0"
   NFPM_VERSION: "v2.46.3"
   PACKAGE_BASE_IMAGE: "ubuntu:18.04"
+  PACKAGE_MAX_GLIBC: "2.27"
   RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
   CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
   CLOUDSMITH_REPOSITORY: ${{ vars.CLOUDSMITH_REPOSITORY }}
@@ -166,6 +167,7 @@ jobs:
           FUSE_PROMISE_FUSE_BACKEND: ${{ matrix.fuse_backend }}
           FUSE_PROMISE_ARCH: ${{ matrix.package_arch }}
           FUSE_PROMISE_RPM_ARCH: ${{ matrix.rpm_arch }}
+          FUSE_PROMISE_MAX_GLIBC: ${{ env.PACKAGE_MAX_GLIBC }}
           DIST_DIR: dist
         run: bash scripts/package-linux-bionic-container.sh
 

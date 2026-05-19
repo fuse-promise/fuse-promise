@@ -12,6 +12,35 @@ fail() {
 command -v nfpm >/dev/null || fail "nfpm is required"
 command -v sha256sum >/dev/null || fail "sha256sum is required"
 
+check_glibc_floor() {
+    local max_allowed=${FUSE_PROMISE_MAX_GLIBC:-}
+    [ -n "$max_allowed" ] || return 0
+
+    command -v readelf >/dev/null || fail "readelf is required when FUSE_PROMISE_MAX_GLIBC is set"
+
+    local binary max_seen highest
+    for binary in \
+        "$stage/usr/bin/fuse-promised" \
+        "$stage/usr/bin/fpctl" \
+        "$stage/usr/lib/libfusepromise.so.$version"; do
+        [ -f "$binary" ] || fail "missing binary for glibc check: $binary"
+
+        max_seen=$(
+            readelf --version-info "$binary" \
+                | sed -n 's/.*GLIBC_\([0-9][0-9.]*\).*/\1/p' \
+                | sort -Vu \
+                | tail -n 1
+        )
+        [ -n "$max_seen" ] || continue
+
+        highest=$(printf '%s\n%s\n' "$max_allowed" "$max_seen" | sort -V | tail -n 1)
+        if [ "$highest" != "$max_allowed" ]; then
+            fail "$binary requires GLIBC_$max_seen, above allowed GLIBC_$max_allowed"
+        fi
+        echo "verified $(basename "$binary") requires GLIBC <= $max_seen (allowed <= $max_allowed)"
+    done
+}
+
 version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_dir/Cargo.toml" | head -n 1)
 [ -n "$version" ] || fail "could not read workspace version"
 
@@ -107,6 +136,8 @@ DESTDIR="$stage" \
     SONAME_MAJOR=1 \
     DAEMON_FEATURES="$daemon_features" \
     scripts/install-dev.sh
+
+check_glibc_floor
 
 export FUSE_PROMISE_VERSION="$version"
 export FUSE_PROMISE_ARCH="$package_arch"

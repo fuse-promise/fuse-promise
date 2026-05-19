@@ -82,7 +82,7 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "fpctl"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "fuse-promise-ipc",
  "fuse-promise-runtime",
@@ -90,7 +90,7 @@ dependencies = [
 
 [[package]]
 name = "fuse-promise-daemon"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "fuse-promise-ipc",
  "fuse-promise-runtime",
@@ -99,7 +99,7 @@ dependencies = [
 
 [[package]]
 name = "fuse-promise-ffi"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "fuse-promise-ipc",
  "fuse-promise-runtime",
@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "fuse-promise-ipc"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "bincode",
  "fuse-promise-runtime",
@@ -117,7 +117,7 @@ dependencies = [
 
 [[package]]
 name = "fuse-promise-runtime"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "rustix",
  "tempfile",

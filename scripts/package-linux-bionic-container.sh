@@ -33,6 +33,7 @@ docker run --rm \
     -e FUSE_PROMISE_FUSE_BACKEND="${FUSE_PROMISE_FUSE_BACKEND:-fuse3}" \
     -e FUSE_PROMISE_ARCH="${FUSE_PROMISE_ARCH:-}" \
     -e FUSE_PROMISE_RPM_ARCH="${FUSE_PROMISE_RPM_ARCH:-}" \
+    -e FUSE_PROMISE_MAX_GLIBC="${FUSE_PROMISE_MAX_GLIBC:-2.27}" \
     -e DIST_DIR="$container_dist_dir" \
     -e HOST_UID="$(id -u)" \
     -e HOST_GID="$(id -g)" \

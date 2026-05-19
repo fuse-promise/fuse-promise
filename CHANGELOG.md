@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.3 - 2026-05-19
+
+Ubuntu 18.04 compatibility packaging update:
+
+- Build release DEB/RPM packages inside an `ubuntu:18.04` container.
+- Lower the GNU/Linux glibc compatibility floor for release binaries to
+  `GLIBC_2.27`.
+- Add release packaging checks that fail when packaged binaries reference
+  `GLIBC_*` symbols newer than the configured compatibility floor.
+- Keep both package variants:
+  `fuse-promise` for FUSE2 and `fuse3-promise` for FUSE3.
+- Update Cloudsmith defaults to target `ubuntu/bionic` and `el/8` package
+  repository metadata.
+- Keep the public C ABI and `libfusepromise.so.1` soname-major compatible.
+
 ## 1.0.2 - 2026-05-19
 
 FUSE backend packaging update:

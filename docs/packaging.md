@@ -102,7 +102,8 @@ FUSE_PROMISE_FUSE_BACKEND=fuse3 scripts/package-linux-bionic-container.sh
 FUSE_PROMISE_FUSE_BACKEND=fuse DIST_DIR=dist/fuse scripts/package-linux-bionic-container.sh
 ```
 
-The container wrapper builds inside `ubuntu:18.04` and writes artifacts to
+The container wrapper builds inside `ubuntu:18.04`, verifies that packaged
+binaries do not require symbols newer than `GLIBC_2.27`, and writes artifacts to
 `dist/`.
 
 It then writes these artifacts to `dist/`:
