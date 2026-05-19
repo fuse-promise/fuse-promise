@@ -48,11 +48,12 @@ nav:
       - Runtime: runtime.md
       - Promise Model: promise-model.md
       - Security: security.md
-  - Maintenance: maintenance.md
+  - Maintenance:
+      - Maintenance: maintenance.md
       - Release Notes:
-      - Stable: release-notes-stable.md
-      - 1.0.4: release-notes-1.0.4.md
-      - 1.0.3: release-notes-1.0.3.md
-      - 1.0.2: release-notes-1.0.2.md
-      - 1.0.1: release-notes-1.0.1.md
-      - 0.1.0: release-notes-0.1.0.md
+          - Stable: release-notes-stable.md
+          - 1.0.4: release-notes-1.0.4.md
+          - 1.0.3: release-notes-1.0.3.md
+          - 1.0.2: release-notes-1.0.2.md
+          - 1.0.1: release-notes-1.0.1.md
+          - 0.1.0: release-notes-0.1.0.md
