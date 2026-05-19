@@ -223,14 +223,14 @@ FUSE_PROMISE_FUSE_BACKEND=fuse DIST_DIR=dist/fuse scripts/package-linux.sh
 Release artifacts:
 
 ```text
-fuse-promise-fuse3_<version>-1_amd64.deb
-fuse-promise-fuse3_<version>-1_arm64.deb
-fuse-promise-fuse3-<version>-1.x86_64.rpm
-fuse-promise-fuse3-<version>-1.aarch64.rpm
-fuse-promise-fuse_<version>-1_amd64.deb
-fuse-promise-fuse_<version>-1_arm64.deb
-fuse-promise-fuse-<version>-1.x86_64.rpm
-fuse-promise-fuse-<version>-1.aarch64.rpm
+fuse3-promise_<version>-1_amd64.deb
+fuse3-promise_<version>-1_arm64.deb
+fuse3-promise-<version>-1.x86_64.rpm
+fuse3-promise-<version>-1.aarch64.rpm
+fuse-promise_<version>-1_amd64.deb
+fuse-promise_<version>-1_arm64.deb
+fuse-promise-<version>-1.x86_64.rpm
+fuse-promise-<version>-1.aarch64.rpm
 fuse-promise-<version>.tar.gz
 SHA256SUMS
 ```

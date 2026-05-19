@@ -55,8 +55,8 @@ case "${FUSE_PROMISE_FUSE_BACKEND:-fuse3}" in
     fuse | fuse2)
         fuse_backend=fuse
         daemon_features=fuse-mount-fuse
-        package_name=fuse-promise-fuse
-        package_conflicts=fuse-promise-fuse3
+        package_name=fuse-promise
+        package_conflicts=fuse3-promise
         package_description="Linux user-space Promise filesystem runtime built on FUSE2."
         deb_fuse_dep=fuse
         deb_libfuse_dep=libfuse2
@@ -66,8 +66,8 @@ case "${FUSE_PROMISE_FUSE_BACKEND:-fuse3}" in
     fuse3)
         fuse_backend=fuse3
         daemon_features=fuse-mount-fuse3
-        package_name=fuse-promise-fuse3
-        package_conflicts=fuse-promise-fuse
+        package_name=fuse3-promise
+        package_conflicts=fuse-promise
         package_description="Linux user-space Promise filesystem runtime built on FUSE3."
         deb_fuse_dep=fuse3
         deb_libfuse_dep=libfuse3-3
