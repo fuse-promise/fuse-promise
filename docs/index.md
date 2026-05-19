@@ -49,11 +49,11 @@ fuse-promise/fuse-promise.h
 
 ## Start Here
 
-- [Architecture](architecture.md) explains the system boundary and component
-  ownership.
-- [Public API](public-api.md) documents the C ABI, provider callbacks, Promise
-  tree builder, and materialize entry points.
+- [Public API](public-api.md) shows the normal provider flow and documents each
+  public function with a usage example.
 - [Packaging](packaging.md) documents the DEB/RPM package names, FUSE2/FUSE3
   variants, and release workflow.
 - [Testing](testing.md) documents local build gates and mounted FUSE smoke
   tests.
+- [Maintenance](maintenance.md) documents how this repository's docs, public
+  ABI, packages, and releases are maintained.

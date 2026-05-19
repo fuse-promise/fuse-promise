@@ -16,6 +16,16 @@ theme:
 plugins:
   - search
 
+not_in_nav: |
+  /development-style.md
+  /implementation-decisions.md
+  /language-and-abi.md
+  /progress.md
+  /project-statement.md
+  /requirements.md
+  /roadmap.md
+  /stable-abi-release.md
+
 markdown_extensions:
   - admonition
   - attr_list
@@ -29,22 +39,16 @@ markdown_extensions:
 
 nav:
   - Overview: index.md
-  - Architecture: architecture.md
-  - Public API: public-api.md
-  - Runtime: runtime.md
-  - Promise Model: promise-model.md
-  - Language and ABI: language-and-abi.md
-  - Packaging: packaging.md
-  - Testing: testing.md
-  - Security: security.md
-  - Requirements: requirements.md
-  - Roadmap: roadmap.md
-  - Project Notes:
-      - Project Statement: project-statement.md
-      - Implementation Decisions: implementation-decisions.md
-      - Development Style: development-style.md
-      - Stable ABI Release: stable-abi-release.md
-      - Progress: progress.md
+  - Use:
+      - Public API: public-api.md
+      - Packaging: packaging.md
+      - Testing: testing.md
+  - Concepts:
+      - Architecture: architecture.md
+      - Runtime: runtime.md
+      - Promise Model: promise-model.md
+      - Security: security.md
+  - Maintenance: maintenance.md
   - Release Notes:
       - Stable: release-notes-stable.md
       - 1.0.2: release-notes-1.0.2.md

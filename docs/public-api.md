@@ -1,253 +1,328 @@
 # Public API
 
-## ABI Principle
+This page describes how an application uses `fuse-promise` after the package is
+installed.
 
-The public API is a versioned C ABI exported by `libfusepromise.so`.
+The public API is the C ABI exported by `libfusepromise.so`. Applications do not
+talk to daemon IPC directly.
 
-Applications must include:
+## Build Against the Library
+
+Include the public header:
 
 ```c
 #include <fuse-promise/fuse-promise.h>
 ```
 
-Applications must link through:
+Compile and link with `pkg-config`:
 
 ```sh
-pkg-config --cflags --libs fuse-promise
+cc provider.c $(pkg-config --cflags --libs fuse-promise) -o provider
 ```
 
-The API hides all daemon communication. Internal IPC is not stable and must not be used by applications.
-
-## Header Ownership
-
-The public header lives at:
-
-```text
-include/fuse-promise/fuse-promise.h
-```
-
-Installed path:
+Installed files used by application developers:
 
 ```text
 /usr/include/fuse-promise/fuse-promise.h
+/usr/lib/libfusepromise.so
+/usr/lib/pkgconfig/fuse-promise.pc
 ```
 
-## Naming
+The daemon must be running before a provider can publish a visible Promise tree:
 
-Public symbols use the `fp_` prefix.
-
-Opaque handles:
-
-```c
-typedef struct fp_context fp_context_t;
-typedef struct fp_provider fp_provider_t;
-typedef struct fp_promise_builder fp_promise_builder_t;
+```sh
+systemctl --user start fuse-promised
 ```
 
-Status values:
+For manual testing:
+
+```sh
+fuse-promised --foreground
+```
+
+## Basic Flow
+
+A provider usually does this:
+
+1. Open a `fp_context_t`.
+2. Register a provider read callback.
+3. Create a Promise builder.
+4. Add directories and files with attributes.
+5. Commit the tree and receive the visible path.
+6. Keep the provider process alive while files may be read.
+7. Optionally materialize the promised path into local storage.
+8. Unregister the provider and close the context.
+
+Mounted writes are not a public callback today. Writing promised content into
+local storage is done through `fp_materialize()` or `fpctl materialize`.
+
+## Status Values
+
+Most functions return `fp_status_t`.
+
+| Status | Meaning for callers |
+|---|---|
+| `FP_OK` | The operation completed. |
+| `FP_ERR_INVALID_ARGUMENT` | A pointer, struct size, enum value, path, or buffer is invalid. |
+| `FP_ERR_UNAVAILABLE` | The daemon, mount, runtime directory, or requested mode is unavailable. |
+| `FP_ERR_PERMISSION` | The operation is not allowed for this user or provider. |
+| `FP_ERR_NOT_FOUND` | The Promise, node, path, or provider object was not found. |
+| `FP_ERR_ALREADY_EXISTS` | The target already exists and the conflict policy does not allow it. |
+| `FP_ERR_PROVIDER_GONE` | The provider disconnected before bytes could be supplied. |
+| `FP_ERR_IO` | An underlying I/O operation failed. |
+| `FP_ERR_TIMEOUT` | The daemon or provider did not answer in time. |
+| `FP_ERR_CANCELLED` | A cancellable operation was cancelled. |
+| `FP_ERR_VERSION_MISMATCH` | The caller and runtime use incompatible API versions. |
+
+Use `fp_status_string()` when printing errors.
+
+## `fp_status_string`
 
 ```c
-typedef uint32_t fp_status_t;
-
-#define FP_OK ((fp_status_t)0u)
-#define FP_ERR_INVALID_ARGUMENT ((fp_status_t)1u)
-#define FP_ERR_UNAVAILABLE ((fp_status_t)2u)
-#define FP_ERR_PERMISSION ((fp_status_t)3u)
-#define FP_ERR_NOT_FOUND ((fp_status_t)4u)
-#define FP_ERR_ALREADY_EXISTS ((fp_status_t)5u)
-#define FP_ERR_PROVIDER_GONE ((fp_status_t)6u)
-#define FP_ERR_IO ((fp_status_t)7u)
-#define FP_ERR_TIMEOUT ((fp_status_t)8u)
-#define FP_ERR_CANCELLED ((fp_status_t)9u)
-#define FP_ERR_VERSION_MISMATCH ((fp_status_t)10u)
-
 const char *fp_status_string(fp_status_t status);
 ```
 
-Status meanings:
+Returns a stable English string for a status value.
 
-| Status | Meaning |
-|---|---|
-| `FP_OK` | Operation completed successfully. |
-| `FP_ERR_INVALID_ARGUMENT` | A pointer, struct size, enum value, path, buffer, or state transition supplied by the caller is invalid. |
-| `FP_ERR_UNAVAILABLE` | The daemon, mount, runtime directory, or requested unsupported mode is not available. |
-| `FP_ERR_PERMISSION` | The operation was rejected because ownership, permissions, or provider identity checks failed. |
-| `FP_ERR_NOT_FOUND` | The requested Promise, node, provider-owned object, or filesystem path was not found. |
-| `FP_ERR_ALREADY_EXISTS` | A fail-on-conflict operation found an existing target. |
-| `FP_ERR_PROVIDER_GONE` | The provider that owns the Promise disconnected before the operation could be satisfied. |
-| `FP_ERR_IO` | An internal or underlying filesystem I/O failure occurred. |
-| `FP_ERR_TIMEOUT` | A provider or daemon operation timed out. |
-| `FP_ERR_CANCELLED` | A cancellable operation was cancelled. |
-| `FP_ERR_VERSION_MISMATCH` | The caller's ABI version or private client/daemon protocol version is incompatible with the runtime. |
-
-Filesystem errno mappings used by FUSE callbacks:
-
-| Runtime Condition | Filesystem Error |
-|---|---:|
-| Missing inode, path, or child | `ENOENT` |
-| Directory opened or read as a file | `EISDIR` |
-| Invalid offset, size, path, or argument | `EINVAL` |
-| Permission or ownership failure | `EACCES` |
-| Provider unavailable, provider disconnected, or internal I/O failure | `EIO` |
-| Timeout | `ETIMEDOUT` |
-| Cancellation | `ECANCELED` |
-
-When a provider connection closes, daemon-owned promises that still depend on
-that provider are marked provider-gone unless they are completely materialized
-or the requested range is fully covered by the read-through cache policy.
-Reads and materialize operations for provider-gone promises fail
-deterministically with `FP_ERR_PROVIDER_GONE` through the public C ABI and
-`EIO` through FUSE reads.
-
-## API Sketch
-
-This API is the stable C ABI for the `1.0.0` release.
+Use it for logs, diagnostics, and command-line errors:
 
 ```c
-typedef struct fp_context_options {
-    uint32_t struct_size;
-    uint32_t api_version;
-    const char *runtime_dir;
-} fp_context_options_t;
+fprintf(stderr, "fp_context_open: %s\n", fp_status_string(status));
+```
 
-#define FP_CONTEXT_OPTIONS_INIT \
-    { sizeof(fp_context_options_t), FP_API_VERSION, NULL }
+## `fp_context_open`
 
+```c
 fp_status_t fp_context_open(
     const fp_context_options_t *options,
     fp_context_t **out_context);
+```
 
+Opens a client context.
+
+Use `FP_CONTEXT_OPTIONS_INIT` so the struct size and API version are set:
+
+```c
+fp_context_options_t options = FP_CONTEXT_OPTIONS_INIT;
+options.runtime_dir = runtime_dir;
+
+fp_context_t *context = NULL;
+fp_status_t status = fp_context_open(&options, &context);
+```
+
+`runtime_dir` should match the runtime directory used by `fuse-promised`. For a
+normal user session this is usually `XDG_RUNTIME_DIR`. Passing `NULL` options
+uses the default runtime directory.
+
+## `fp_context_close`
+
+```c
 void fp_context_close(fp_context_t *context);
 ```
 
-Passing `NULL` for options means the current ABI default options. Non-NULL
-options must set `struct_size` and `api_version`.
+Closes a context returned by `fp_context_open()`.
 
-Provider registration:
+Unregister providers and free active builders before closing the context.
+Passing `NULL` is allowed.
+
+## `fp_provider_read_fn`
 
 ```c
-typedef struct fp_read_request {
-    const char *promise_id;
-    const char *node_id;
-    const char *relative_path;
-    uint64_t offset;
-    size_t length;
-} fp_read_request_t;
-
-typedef struct fp_read_response {
-    uint8_t *buffer;
-    size_t buffer_len;
-    size_t bytes_written;
-} fp_read_response_t;
-
 typedef fp_status_t (*fp_provider_read_fn)(
     const fp_read_request_t *request,
     fp_read_response_t *response,
     void *user_data);
+```
 
-typedef struct fp_provider_ops {
-    uint32_t struct_size;
-    fp_provider_read_fn read;
-} fp_provider_ops_t;
+This callback supplies bytes for promised files.
 
-#define FP_PROVIDER_OPS_INIT(read_fn) \
-    { sizeof(fp_provider_ops_t), (read_fn) }
+The runtime calls it when a process reads a file through the FUSE mount or when
+materialize needs the file contents.
 
+Request fields:
+
+| Field | Meaning |
+|---|---|
+| `promise_id` | Runtime Promise identifier. |
+| `node_id` | Provider node identifier passed to `fp_promise_add_file()`. |
+| `relative_path` | Path of the file inside the Promise tree. |
+| `offset` | First byte requested. |
+| `length` | Maximum number of bytes requested. |
+
+Response fields:
+
+| Field | Rule |
+|---|---|
+| `buffer` | Writable buffer owned by the runtime. |
+| `buffer_len` | Maximum bytes the callback may write. |
+| `bytes_written` | Number of bytes actually written. |
+
+The callback must not retain `response->buffer` after it returns.
+
+Return `FP_OK` for a successful read, including end-of-file with
+`bytes_written = 0`. Return `FP_ERR_NOT_FOUND` if the requested provider node is
+unknown.
+
+## `fp_provider_register`
+
+```c
 fp_status_t fp_provider_register(
     fp_context_t *context,
     const fp_provider_ops_t *ops,
     void *user_data,
     fp_provider_t **out_provider);
+```
 
+Registers a provider with the daemon.
+
+The provider must include a read callback:
+
+```c
+fp_provider_ops_t ops = FP_PROVIDER_OPS_INIT(read_file);
+
+fp_provider_t *provider = NULL;
+fp_status_t status = fp_provider_register(context, &ops, user_data, &provider);
+```
+
+`user_data` is passed back to the read callback. The provider process must stay
+alive while any promised files can still be read.
+
+## `fp_provider_unregister`
+
+```c
 void fp_provider_unregister(fp_provider_t *provider);
 ```
 
-The current implementation registers providers with `fuse-promised` through
-private daemon IPC. If the daemon is unavailable, provider registration returns
-`FP_ERR_UNAVAILABLE`. Provider read requests received on the private provider
-connection are dispatched to the registered public C callback. Daemon-side read
-routing and feature-gated FUSE callbacks are covered by the mounted smoke
-harness.
+Unregisters a provider returned by `fp_provider_register()`.
 
-Promise creation:
+After unregistering, reads for non-materialized content owned by that provider
+can fail with `FP_ERR_PROVIDER_GONE` through the C API or an I/O error through
+the mounted filesystem. Passing `NULL` is allowed.
+
+## `fp_promise_builder_new`
 
 ```c
-typedef struct fp_node_attr {
-    uint32_t struct_size;
-    uint32_t mode;
-    uint64_t size;
-    int64_t mtime_nsec;
-} fp_node_attr_t;
-
-#define FP_NODE_ATTR_INIT \
-    { sizeof(fp_node_attr_t), 0u, 0u, 0 }
-
 fp_status_t fp_promise_builder_new(
     fp_context_t *context,
     fp_provider_t *provider,
     fp_promise_builder_t **out_builder);
+```
 
+Creates a builder for one Promise tree.
+
+All files added to the builder are owned by the provider passed here.
+
+```c
+fp_promise_builder_t *builder = NULL;
+fp_status_t status = fp_promise_builder_new(context, provider, &builder);
+```
+
+## `fp_promise_add_dir`
+
+```c
 fp_status_t fp_promise_add_dir(
     fp_promise_builder_t *builder,
     const char *relative_path,
     const fp_node_attr_t *attr,
     const char *provider_node_id);
+```
 
+Adds a directory to the Promise tree.
+
+Use a relative path without a leading slash:
+
+```c
+fp_node_attr_t dir_attr = FP_NODE_ATTR_INIT;
+dir_attr.mode = 0755;
+dir_attr.mtime_nsec = 1700000000000000000LL;
+
+fp_promise_add_dir(builder, "docs", &dir_attr, "docs-dir");
+```
+
+Directory attributes:
+
+| Field | Rule |
+|---|---|
+| `mode` | Permission bits, for example `0755`. |
+| `size` | Must be `0` for directories. |
+| `mtime_nsec` | Unix epoch timestamp in nanoseconds. |
+
+`provider_node_id` is your stable identifier for this directory.
+
+## `fp_promise_add_file`
+
+```c
 fp_status_t fp_promise_add_file(
     fp_promise_builder_t *builder,
     const char *relative_path,
     const fp_node_attr_t *attr,
     const char *provider_node_id);
+```
 
+Adds a file to the Promise tree.
+
+```c
+fp_node_attr_t file_attr = FP_NODE_ATTR_INIT;
+file_attr.mode = 0644;
+file_attr.size = file_size;
+file_attr.mtime_nsec = 1700000000000000000LL;
+
+fp_promise_add_file(builder, "docs/hello.txt", &file_attr, "hello-file");
+```
+
+File attributes:
+
+| Field | Rule |
+|---|---|
+| `mode` | Permission bits, for example `0644`. |
+| `size` | Visible file size reported by `stat`. |
+| `mtime_nsec` | Unix epoch timestamp in nanoseconds. |
+
+`provider_node_id` is returned later in `fp_read_request_t.node_id`, so your
+callback can find the file contents.
+
+## `fp_promise_commit`
+
+```c
 fp_status_t fp_promise_commit(
     fp_promise_builder_t *builder,
     char *out_path,
     size_t out_path_len);
+```
 
+Publishes the Promise tree to the mounted filesystem.
+
+On success, `out_path` receives the visible root path:
+
+```c
+char visible_path[4096];
+fp_status_t status =
+    fp_promise_commit(builder, visible_path, sizeof(visible_path));
+```
+
+After commit, normal Linux tools can inspect the tree:
+
+```sh
+find "$visible_path" -maxdepth 2 -type f -print
+cat "$visible_path/docs/hello.txt"
+```
+
+The provider still needs to stay alive so reads can be served.
+
+## `fp_promise_builder_free`
+
+```c
 void fp_promise_builder_free(fp_promise_builder_t *builder);
 ```
 
-`mode` contains Unix permission bits only, such as `0644` or `0755`. The
-runtime derives the file type from whether the caller adds a file or directory.
-Directories must use size `0`. `mtime_nsec` is a non-negative Unix epoch
-timestamp in nanoseconds.
+Frees a builder.
 
-Materialize:
+Call this after `fp_promise_commit()` succeeds, or during error cleanup if a
+builder is no longer needed. Passing `NULL` is allowed.
+
+## `fp_materialize`
 
 ```c
-typedef uint32_t fp_conflict_policy_t;
-
-#define FP_CONFLICT_FAIL ((fp_conflict_policy_t)0u)
-#define FP_CONFLICT_OVERWRITE ((fp_conflict_policy_t)1u)
-#define FP_CONFLICT_RENAME ((fp_conflict_policy_t)2u)
-
-typedef struct fp_materialize_progress {
-    uint32_t struct_size;
-    uint64_t entries_done;
-    uint64_t entries_total;
-    uint64_t bytes_written;
-    uint64_t bytes_total;
-    uint64_t files_written;
-    uint64_t files_total;
-    uint64_t directories_created;
-    uint64_t directories_total;
-    const char *target_path;
-} fp_materialize_progress_t;
-
-typedef fp_status_t (*fp_materialize_progress_fn)(
-    const fp_materialize_progress_t *progress,
-    void *user_data);
-
-typedef struct fp_materialize_options {
-    uint32_t struct_size;
-    fp_conflict_policy_t conflict_policy;
-    fp_materialize_progress_fn progress;
-    void *progress_user_data;
-} fp_materialize_options_t;
-
-#define FP_MATERIALIZE_OPTIONS_INIT \
-    { sizeof(fp_materialize_options_t), FP_CONFLICT_FAIL, NULL, NULL }
-
 fp_status_t fp_materialize(
     fp_context_t *context,
     const char *promise_path,
@@ -255,82 +330,198 @@ fp_status_t fp_materialize(
     const fp_materialize_options_t *options);
 ```
 
-The current implementation routes `fp_promise_commit()` through private daemon
-IPC and returns `FP_ERR_UNAVAILABLE` until the daemon reports a commit-ready
-FUSE namespace. When commit-ready, the daemon owns the namespace and may return
-the visible Promise path. `fp_materialize()` supports file and directory
-subtree materialize with `FP_CONFLICT_FAIL`, `FP_CONFLICT_OVERWRITE`, and
-`FP_CONFLICT_RENAME`.
-`FP_CONFLICT_RENAME` chooses a non-existing root target before materializing:
-files receive a ` (N)` suffix before the extension, directories receive the
-suffix after the directory name, and subtree child names are preserved under
-that chosen root.
-When `fp_materialize_options_t.progress` is non-NULL, the synchronous
-`fp_materialize()` call invokes it with best-effort progress snapshots. The
-`target_path` pointer in `fp_materialize_progress_t` is valid only for the
-duration of the callback. Returning any status other than `FP_OK` aborts the
-operation and returns that status to the caller. Returning `FP_ERR_CANCELLED`
-from the progress callback cancels the daemon-side materialize job, cleans up
-targets owned by the job, and returns `FP_ERR_CANCELLED`.
-The first stable ABI release treats `FP_CONFLICT_FAIL`,
-`FP_CONFLICT_OVERWRITE`, `FP_CONFLICT_RENAME`, `fp_materialize_progress_t`, and
-progress-callback cancellation as stable public commitments.
-Materialized files can satisfy later reads through their local materialized
-paths, and an opt-in daemon read-through cache can coalesce reads, prefetch
-sequential ranges, and satisfy fully cached ranges without changing the public
-C ABI. The public library must
-not fabricate visible FUSE paths from client-local state.
+Writes a promised file or directory subtree into local storage.
+
+`promise_path` is a visible path under the mounted Promise filesystem.
+`target_dir` is an existing local directory where content should be written.
+
+```c
+fp_materialize_options_t options = FP_MATERIALIZE_OPTIONS_INIT;
+options.conflict_policy = FP_CONFLICT_RENAME;
+
+fp_status_t status =
+    fp_materialize(context, visible_path, "/tmp/out", &options);
+```
+
+Conflict policies:
+
+| Policy | Behavior |
+|---|---|
+| `FP_CONFLICT_FAIL` | Fail if the target exists. |
+| `FP_CONFLICT_OVERWRITE` | Replace existing target content where allowed. |
+| `FP_CONFLICT_RENAME` | Pick a non-existing target name. |
+
+If `options.progress` is set, the callback receives best-effort progress
+snapshots. Returning `FP_ERR_CANCELLED` from the progress callback cancels the
+operation.
 
 ## String and Buffer Rules
 
-The ABI accepts NUL-terminated UTF-8 strings for promise paths, provider node
-identifiers, and runtime directory overrides. A future byte-path API may be
-added as a separate additive entrypoint if full Linux non-UTF-8 filename
-support is required.
+Paths and provider node identifiers are NUL-terminated UTF-8 strings.
 
-Provider read callbacks receive a runtime-owned writable buffer:
+Relative paths passed to `fp_promise_add_dir()` and `fp_promise_add_file()`:
 
-- `response->buffer` points to storage owned by `libfusepromise.so`.
-- `response->buffer_len` is the maximum number of bytes the provider may write.
-- The provider sets `response->bytes_written` to the number of bytes produced.
-- The provider must not retain the buffer pointer after the callback returns.
+- Must not start with `/`.
+- Must not contain `..` components.
+- Should use `/` as the separator.
 
-## Usage Pattern
+Read callbacks must write at most `response->buffer_len` bytes and set
+`response->bytes_written`.
+
+## Complete Example Usage
+
+This example publishes `docs/hello.txt`, serves reads from memory, and can
+materialize the Promise tree when a target directory is passed as the second
+argument.
+
+The complete maintained example is
+[`examples/minimal_provider.c`](https://github.com/fuse-promise/fuse-promise/blob/main/examples/minimal_provider.c).
 
 ```c
-fp_context_options_t options = FP_CONTEXT_OPTIONS_INIT;
-fp_context_t *ctx = NULL;
-fp_context_open(&options, &ctx);
+#include <fuse-promise/fuse-promise.h>
 
-fp_provider_ops_t ops = FP_PROVIDER_OPS_INIT(read_cb);
-fp_provider_t *provider = NULL;
-fp_provider_register(ctx, &ops, user_data, &provider);
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
-fp_promise_builder_t *builder = NULL;
-fp_promise_builder_new(ctx, provider, &builder);
+static const char kData[] = "hello from fuse-promise example\n";
+static volatile sig_atomic_t keep_running = 1;
 
-fp_node_attr_t dir_attr = FP_NODE_ATTR_INIT;
-dir_attr.mode = 0755;
+static void stop_provider(int signal_number) {
+    (void)signal_number;
+    keep_running = 0;
+}
 
-fp_node_attr_t file_attr = FP_NODE_ATTR_INIT;
-file_attr.mode = 0644;
-file_attr.size = 1234;
+static fp_status_t read_file(const fp_read_request_t *request,
+                             fp_read_response_t *response,
+                             void *user_data) {
+    (void)user_data;
 
-fp_promise_add_dir(builder, "photos", &dir_attr, "remote-dir-1");
-fp_promise_add_file(builder, "photos/a.jpg", &file_attr, "remote-file-1");
+    if (strcmp(request->node_id, "hello-file") != 0 ||
+        strcmp(request->relative_path, "docs/hello.txt") != 0) {
+        return FP_ERR_NOT_FOUND;
+    }
 
-char path[4096];
-fp_status_t status = fp_promise_commit(builder, path, sizeof(path));
-/* Returns FP_OK with a visible path after the daemon is commit-ready. */
-(void)status;
+    size_t size = strlen(kData);
+    if (request->offset >= size) {
+        response->bytes_written = 0;
+        return FP_OK;
+    }
 
-/* The provider process must remain alive while the promise can be read. */
+    size_t available = size - (size_t)request->offset;
+    size_t count = request->length < available ? request->length : available;
+    if (count > response->buffer_len) {
+        count = response->buffer_len;
+    }
+
+    memcpy(response->buffer, kData + request->offset, count);
+    response->bytes_written = count;
+    return FP_OK;
+}
+
+static void fail(const char *label, fp_status_t status) {
+    fprintf(stderr, "%s: %s (%u)\n", label, fp_status_string(status), status);
+    exit(1);
+}
+
+int main(int argc, char **argv) {
+    if (argc < 2 || argc > 3) {
+        fprintf(stderr, "usage: provider <runtime-dir> [materialize-target]\n");
+        return 2;
+    }
+
+    signal(SIGTERM, stop_provider);
+    signal(SIGINT, stop_provider);
+
+    fp_context_options_t context_options = FP_CONTEXT_OPTIONS_INIT;
+    context_options.runtime_dir = argv[1];
+
+    fp_context_t *context = NULL;
+    fp_status_t status = fp_context_open(&context_options, &context);
+    if (status != FP_OK) {
+        fail("fp_context_open", status);
+    }
+
+    fp_provider_ops_t ops = FP_PROVIDER_OPS_INIT(read_file);
+    fp_provider_t *provider = NULL;
+    status = fp_provider_register(context, &ops, NULL, &provider);
+    if (status != FP_OK) {
+        fail("fp_provider_register", status);
+    }
+
+    fp_promise_builder_t *builder = NULL;
+    status = fp_promise_builder_new(context, provider, &builder);
+    if (status != FP_OK) {
+        fail("fp_promise_builder_new", status);
+    }
+
+    fp_node_attr_t dir_attr = FP_NODE_ATTR_INIT;
+    dir_attr.mode = 0755;
+    dir_attr.mtime_nsec = 1700000000000000000LL;
+    status = fp_promise_add_dir(builder, "docs", &dir_attr, "docs-dir");
+    if (status != FP_OK) {
+        fail("fp_promise_add_dir", status);
+    }
+
+    fp_node_attr_t file_attr = FP_NODE_ATTR_INIT;
+    file_attr.mode = 0644;
+    file_attr.size = strlen(kData);
+    file_attr.mtime_nsec = 1700000000000000000LL;
+    status = fp_promise_add_file(builder, "docs/hello.txt", &file_attr,
+                                 "hello-file");
+    if (status != FP_OK) {
+        fail("fp_promise_add_file", status);
+    }
+
+    char visible_path[4096];
+    status = fp_promise_commit(builder, visible_path, sizeof(visible_path));
+    if (status != FP_OK) {
+        fail("fp_promise_commit", status);
+    }
+    fp_promise_builder_free(builder);
+
+    printf("Promise path: %s\n", visible_path);
+    fflush(stdout);
+
+    if (argc == 3) {
+        fp_materialize_options_t materialize_options =
+            FP_MATERIALIZE_OPTIONS_INIT;
+        materialize_options.conflict_policy = FP_CONFLICT_RENAME;
+
+        status = fp_materialize(context, visible_path, argv[2],
+                                &materialize_options);
+        if (status != FP_OK) {
+            fail("fp_materialize", status);
+        }
+    }
+
+    while (keep_running) {
+        sleep(1);
+    }
+
+    fp_provider_unregister(provider);
+    fp_context_close(context);
+    return 0;
+}
 ```
 
-## Compatibility Rules
+Run it with a foreground daemon:
 
-- Public structs must include `struct_size` unless they are explicitly frozen.
-- New status and policy values may be added.
-- Existing status and policy values must not be renumbered.
-- Public functions must keep stable symbol names after the first ABI release.
-- Internal IPC messages must not be documented as public API.
+```sh
+runtime=$(mktemp -d)
+out=$(mktemp -d)
+
+XDG_RUNTIME_DIR="$runtime" fuse-promised --foreground &
+daemon_pid=$!
+
+cc provider.c $(pkg-config --cflags --libs fuse-promise) -o provider
+./provider "$runtime" "$out" &
+provider_pid=$!
+
+cat "$runtime/fuse-promise/promise-1/docs/hello.txt"
+find "$out" -maxdepth 2 -type f -print
+
+kill "$provider_pid" "$daemon_pid"
+```
