@@ -25,6 +25,19 @@ The release package job verifies the maximum referenced `GLIBC_*` symbol for:
 If any packaged binary requires a glibc symbol newer than `GLIBC_2.27`, the
 release job fails before publishing assets.
 
+Ubuntu 18.04 does not ship `libfuse3-dev`. For the `fuse3-promise` package,
+the release build compiles against upstream libfuse `3.18.2` inside the bionic
+container using the verified source archive:
+
+```text
+fuse-3.18.2.tar.gz
+sha256:f01de85717e20adf5f98aff324acd85dd73d61a5ca3834d573dcf0bd6e54a298
+```
+
+The `fuse3-promise` package still depends on a runtime `libfuse3` provider on
+the target system. The glibc floor is lowered for the `fuse-promise` binaries;
+it does not vendor libfuse3 into the package.
+
 ## Packaging
 
 - FUSE2 package name: `fuse-promise`.

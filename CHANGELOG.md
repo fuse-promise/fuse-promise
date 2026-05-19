@@ -7,6 +7,8 @@ Ubuntu 18.04 compatibility packaging update:
 - Build release DEB/RPM packages inside an `ubuntu:18.04` container.
 - Lower the GNU/Linux glibc compatibility floor for release binaries to
   `GLIBC_2.27`.
+- Build the FUSE3 backend against upstream libfuse `3.18.2` inside the bionic
+  container because Ubuntu 18.04 does not ship `libfuse3-dev`.
 - Add release packaging checks that fail when packaged binaries reference
   `GLIBC_*` symbols newer than the configured compatibility floor.
 - Keep both package variants:

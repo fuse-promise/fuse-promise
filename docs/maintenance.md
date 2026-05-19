@@ -112,7 +112,9 @@ The release workflow builds DEB and RPM artifacts for both FUSE2 and FUSE3.
 Those package builds run inside `ubuntu:18.04` through
 `scripts/package-linux-bionic-container.sh` so released binaries keep a glibc
 2.27 compatibility floor. The package script verifies the maximum referenced
-`GLIBC_*` symbol when `FUSE_PROMISE_MAX_GLIBC` is set.
+`GLIBC_*` symbol when `FUSE_PROMISE_MAX_GLIBC` is set. FUSE3 package builds
+compile against upstream libfuse `3.18.2` inside the container because Ubuntu
+18.04 does not provide `libfuse3-dev`.
 
 Before changing package names, dependencies, or installed paths, verify:
 
