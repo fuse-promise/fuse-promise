@@ -51,6 +51,34 @@ case "${FUSE_PROMISE_RPM_ARCH:-}" in
         ;;
 esac
 
+case "${FUSE_PROMISE_FUSE_BACKEND:-fuse3}" in
+    fuse | fuse2)
+        fuse_backend=fuse
+        daemon_features=fuse-mount-fuse
+        package_name=fuse-promise-fuse
+        package_conflicts=fuse-promise-fuse3
+        package_description="Linux user-space Promise filesystem runtime built on FUSE2."
+        deb_fuse_dep=fuse
+        deb_libfuse_dep=libfuse2
+        rpm_fuse_dep=fuse
+        rpm_libfuse_dep=fuse-libs
+        ;;
+    fuse3)
+        fuse_backend=fuse3
+        daemon_features=fuse-mount-fuse3
+        package_name=fuse-promise-fuse3
+        package_conflicts=fuse-promise-fuse
+        package_description="Linux user-space Promise filesystem runtime built on FUSE3."
+        deb_fuse_dep=fuse3
+        deb_libfuse_dep=libfuse3-3
+        rpm_fuse_dep=fuse3
+        rpm_libfuse_dep=fuse3-libs
+        ;;
+    *)
+        fail "FUSE_PROMISE_FUSE_BACKEND must be fuse, fuse2, or fuse3"
+        ;;
+esac
+
 repo_abs=$(realpath -m "$repo_dir")
 dist_dir=$(realpath -m "${DIST_DIR:-"$repo_dir/dist"}")
 if [ "$dist_dir" = "/" ] || [ "$dist_dir" = "$repo_abs" ]; then
@@ -77,23 +105,31 @@ DESTDIR="$stage" \
     PREFIX=/usr \
     BUILD_PROFILE=release \
     SONAME_MAJOR=1 \
-    DAEMON_FEATURES=fuse-mount \
+    DAEMON_FEATURES="$daemon_features" \
     scripts/install-dev.sh
 
 export FUSE_PROMISE_VERSION="$version"
 export FUSE_PROMISE_ARCH="$package_arch"
+export FUSE_PROMISE_FUSE_BACKEND="$fuse_backend"
+export FUSE_PROMISE_PACKAGE_NAME="${FUSE_PROMISE_PACKAGE_NAME:-$package_name}"
+export FUSE_PROMISE_PACKAGE_CONFLICTS="${FUSE_PROMISE_PACKAGE_CONFLICTS:-$package_conflicts}"
+export FUSE_PROMISE_PACKAGE_DESCRIPTION="${FUSE_PROMISE_PACKAGE_DESCRIPTION:-$package_description}"
+export FUSE_PROMISE_DEB_FUSE_DEP="${FUSE_PROMISE_DEB_FUSE_DEP:-$deb_fuse_dep}"
+export FUSE_PROMISE_DEB_LIBFUSE_DEP="${FUSE_PROMISE_DEB_LIBFUSE_DEP:-$deb_libfuse_dep}"
+export FUSE_PROMISE_RPM_FUSE_DEP="${FUSE_PROMISE_RPM_FUSE_DEP:-$rpm_fuse_dep}"
+export FUSE_PROMISE_RPM_LIBFUSE_DEP="${FUSE_PROMISE_RPM_LIBFUSE_DEP:-$rpm_libfuse_dep}"
 export FUSE_PROMISE_SONAME_MAJOR=1
 export FUSE_PROMISE_STAGE="$stage"
 
 nfpm package \
     --config packaging/nfpm.yaml \
     --packager deb \
-    --target "$dist_dir/fuse-promise_${version}-1_${package_arch}.deb"
+    --target "$dist_dir/${FUSE_PROMISE_PACKAGE_NAME}_${version}-1_${package_arch}.deb"
 
 nfpm package \
     --config packaging/nfpm.yaml \
     --packager rpm \
-    --target "$dist_dir/fuse-promise-${version}-1.${rpm_arch}.rpm"
+    --target "$dist_dir/${FUSE_PROMISE_PACKAGE_NAME}-${version}-1.${rpm_arch}.rpm"
 
 (
     cd "$dist_dir"

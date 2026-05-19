@@ -152,12 +152,16 @@ Required runtime dependencies for mounted operation:
 ```text
 Linux FUSE kernel support
 /dev/fuse
-fuse3
-libfuse3
-fusermount3
 ```
 
-Packaged builds target Ubuntu 22.04 or newer.
+Packages are built for one FUSE userspace backend:
+
+```text
+FUSE3 package: fuse3, libfuse3, fusermount3
+FUSE2 package: fuse, libfuse2, fusermount
+```
+
+Packaged builds target Ubuntu 22.04 or newer by default.
 
 ## Build and Test
 
@@ -183,7 +187,7 @@ tests/minimal-provider-smoke.sh
 Required system packages on Debian/Ubuntu:
 
 ```sh
-sudo apt-get install build-essential pkg-config libfuse3-dev fuse3
+sudo apt-get install build-essential pkg-config libfuse-dev libfuse3-dev fuse3
 ```
 
 Release gate:
@@ -192,8 +196,8 @@ Release gate:
 BUILD_PROFILE=release SONAME_MAJOR=1 tests/stable-release-gates.sh
 ```
 
-The full gate requires `/dev/fuse`, `fusermount3`, and libfuse3 development
-metadata.
+The full gate currently runs the FUSE3 mounted smoke suite and requires
+`/dev/fuse`, `fusermount3`, and libfuse3 development metadata.
 
 ## Install and Package
 
@@ -212,16 +216,21 @@ DESTDIR="$pkgdir" PREFIX=/usr BUILD_PROFILE=release SONAME_MAJOR=1 DAEMON_FEATUR
 Release packaging uses nFPM:
 
 ```sh
-scripts/package-linux.sh
+FUSE_PROMISE_FUSE_BACKEND=fuse3 scripts/package-linux.sh
+FUSE_PROMISE_FUSE_BACKEND=fuse DIST_DIR=dist/fuse scripts/package-linux.sh
 ```
 
 Release artifacts:
 
 ```text
-fuse-promise_<version>-1_amd64.deb
-fuse-promise_<version>-1_arm64.deb
-fuse-promise-<version>-1.x86_64.rpm
-fuse-promise-<version>-1.aarch64.rpm
+fuse-promise-fuse3_<version>-1_amd64.deb
+fuse-promise-fuse3_<version>-1_arm64.deb
+fuse-promise-fuse3-<version>-1.x86_64.rpm
+fuse-promise-fuse3-<version>-1.aarch64.rpm
+fuse-promise-fuse_<version>-1_amd64.deb
+fuse-promise-fuse_<version>-1_arm64.deb
+fuse-promise-fuse-<version>-1.x86_64.rpm
+fuse-promise-fuse-<version>-1.aarch64.rpm
 fuse-promise-<version>.tar.gz
 SHA256SUMS
 ```

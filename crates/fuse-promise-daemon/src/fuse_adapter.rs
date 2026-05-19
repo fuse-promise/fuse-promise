@@ -1,36 +1,36 @@
 use fuse_promise_ipc::{IpcMountStatus, IpcState};
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 use fuse_promise_ipc::{ProviderReadRequest, ProviderReadStatus, MAX_PROVIDER_READ_LEN};
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 use fuse_promise_runtime::{
     prepare_mount_dir, DirectoryEntry, NodeKind, PromiseNode, ReadPlan, RuntimeEntry, Status,
 };
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 use std::ffi::OsStr;
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 use std::fs;
 use std::io;
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 pub struct FuseMount {
     session: Option<fuser::BackgroundSession>,
 }
 
-#[cfg(not(feature = "fuse-mount"))]
+#[cfg(not(feature = "fuse-mount-backend"))]
 pub struct FuseMount;
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 struct PromiseFilesystem {
     state: IpcState,
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 enum FuseReadPlan {
     Provider {
         request: ProviderReadRequest,
@@ -45,10 +45,10 @@ enum FuseReadPlan {
     Cached(Vec<u8>),
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 const TTL: Duration = Duration::from_secs(1);
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 impl fuser::Filesystem for PromiseFilesystem {
     fn lookup(
         &self,
@@ -242,7 +242,7 @@ impl fuser::Filesystem for PromiseFilesystem {
     }
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 impl PromiseFilesystem {
     fn directory_entries(&self, inode: u64) -> Result<Vec<DirectoryEntry>, fuser::Errno> {
         let runtime_state = self.state.runtime();
@@ -370,7 +370,7 @@ impl PromiseFilesystem {
     }
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 fn provider_reply_bytes(
     bytes: &[u8],
     response_offset: u32,
@@ -390,7 +390,7 @@ fn provider_reply_bytes(
     Ok(&bytes[start..end])
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 fn read_materialized_file(path: &Path, offset: u64, length: u32) -> Result<Vec<u8>, fuser::Errno> {
     let file = fs::File::open(path).map_err(|error| io_error_to_errno(&error))?;
     let mut bytes = vec![0_u8; length as usize];
@@ -404,7 +404,7 @@ fn read_materialized_file(path: &Path, offset: u64, length: u32) -> Result<Vec<u
     Ok(bytes)
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 pub fn start(mount_path: &Path, state: IpcState) -> io::Result<Option<FuseMount>> {
     prepare_mount_dir(mount_path).map_err(status_to_io)?;
 
@@ -426,7 +426,7 @@ pub fn start(mount_path: &Path, state: IpcState) -> io::Result<Option<FuseMount>
     }))
 }
 
-#[cfg(not(feature = "fuse-mount"))]
+#[cfg(not(feature = "fuse-mount-backend"))]
 pub fn start(_mount_path: &Path, _state: IpcState) -> io::Result<Option<FuseMount>> {
     Ok(None)
 }
@@ -439,17 +439,17 @@ pub fn mount_status(mount_path: &Path, mount: &Option<FuseMount>) -> IpcMountSta
     }
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 fn disabled_mount_status(_mount_path: PathBuf) -> IpcMountStatus {
     IpcMountStatus::not_mounted()
 }
 
-#[cfg(not(feature = "fuse-mount"))]
+#[cfg(not(feature = "fuse-mount-backend"))]
 fn disabled_mount_status(mount_path: PathBuf) -> IpcMountStatus {
     IpcMountStatus::disabled(mount_path)
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 impl Drop for FuseMount {
     fn drop(&mut self) {
         if let Some(session) = self.session.take() {
@@ -458,7 +458,7 @@ impl Drop for FuseMount {
     }
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 fn parent_inode(
     runtime: &fuse_promise_runtime::Runtime,
     entry: &RuntimeEntry,
@@ -478,7 +478,7 @@ fn parent_inode(
     }
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 fn entry_attr(entry: &RuntimeEntry, uid: u32, gid: u32) -> fuser::FileAttr {
     match entry {
         RuntimeEntry::MountRoot => fuser::FileAttr {
@@ -502,7 +502,7 @@ fn entry_attr(entry: &RuntimeEntry, uid: u32, gid: u32) -> fuser::FileAttr {
     }
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 fn node_attr(node: &PromiseNode, uid: u32, gid: u32) -> fuser::FileAttr {
     fuser::FileAttr {
         ino: fuser::INodeNo(node.inode),
@@ -527,7 +527,7 @@ fn node_attr(node: &PromiseNode, uid: u32, gid: u32) -> fuser::FileAttr {
     }
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 fn mtime(mtime_nsec: i64) -> SystemTime {
     if mtime_nsec >= 0 {
         UNIX_EPOCH + Duration::from_nanos(mtime_nsec as u64)
@@ -538,7 +538,7 @@ fn mtime(mtime_nsec: i64) -> SystemTime {
     }
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 fn node_kind_to_file_type(kind: NodeKind) -> fuser::FileType {
     match kind {
         NodeKind::File => fuser::FileType::RegularFile,
@@ -546,7 +546,7 @@ fn node_kind_to_file_type(kind: NodeKind) -> fuser::FileType {
     }
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 fn status_to_errno(status: Status) -> fuser::Errno {
     match status {
         Status::Ok => fuser::Errno::EIO,
@@ -560,7 +560,7 @@ fn status_to_errno(status: Status) -> fuser::Errno {
     }
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 fn provider_status_to_errno(status: ProviderReadStatus) -> fuser::Errno {
     match status {
         ProviderReadStatus::Ok => fuser::Errno::EIO,
@@ -573,7 +573,7 @@ fn provider_status_to_errno(status: ProviderReadStatus) -> fuser::Errno {
     }
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 fn io_error_to_errno(error: &io::Error) -> fuser::Errno {
     match error.kind() {
         io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => fuser::Errno::EINVAL,
@@ -585,7 +585,7 @@ fn io_error_to_errno(error: &io::Error) -> fuser::Errno {
     }
 }
 
-#[cfg(feature = "fuse-mount")]
+#[cfg(feature = "fuse-mount-backend")]
 fn status_to_io(status: Status) -> io::Error {
     match status {
         Status::InvalidArgument => io::Error::new(io::ErrorKind::InvalidInput, status.as_str()),

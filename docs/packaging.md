@@ -11,20 +11,20 @@ Required build inputs:
 - Rust toolchain matching the workspace `rust-version`.
 - C compiler for ABI examples and downstream provider builds.
 - `pkg-config`.
-- libfuse3 development files when building the daemon with the `fuse-mount`
-  feature.
+- libfuse3 development files for the `fuse-mount-fuse3` daemon feature.
+- libfuse2 development files for the `fuse-mount-fuse` daemon feature.
 
 Runtime inputs for the FUSE-enabled daemon:
 
 - Linux FUSE support.
 - `/dev/fuse`.
-- `fusermount3`.
-- libfuse3 runtime library.
+- `fusermount3` and libfuse3 runtime library for FUSE3 packages.
+- `fusermount` and libfuse2 runtime library for FUSE2 packages.
 - A valid user-owned `XDG_RUNTIME_DIR`.
 
 ## Build
 
-Default workspace builds do not require libfuse3:
+Default workspace builds do not require libfuse development files:
 
 ```sh
 cargo build --workspace --locked
@@ -35,6 +35,8 @@ Distribution builds should enable the daemon FUSE mount feature:
 
 ```sh
 cargo build -p fuse-promise-daemon --features fuse-mount --locked
+cargo build -p fuse-promise-daemon --features fuse-mount-fuse --locked
+cargo build -p fuse-promise-daemon --features fuse-mount-fuse3 --locked
 ```
 
 ## Install Layout
@@ -43,6 +45,8 @@ The developer install script installs the expected distribution payload:
 
 ```sh
 PREFIX=/usr DAEMON_FEATURES=fuse-mount scripts/install-dev.sh
+PREFIX=/usr DAEMON_FEATURES=fuse-mount-fuse scripts/install-dev.sh
+PREFIX=/usr DAEMON_FEATURES=fuse-mount-fuse3 scripts/install-dev.sh
 ```
 
 Installed files:
@@ -70,7 +74,7 @@ Packagers should stage files with `DESTDIR` while keeping installed metadata
 paths rooted at the final prefix:
 
 ```sh
-DESTDIR="$pkgdir" PREFIX=/usr DAEMON_FEATURES=fuse-mount scripts/install-dev.sh
+DESTDIR="$pkgdir" PREFIX=/usr DAEMON_FEATURES=fuse-mount-fuse3 scripts/install-dev.sh
 ```
 
 The generated pkg-config file and systemd service must not include the staging
@@ -81,20 +85,23 @@ root in `includedir`, `libdir`, or `ExecStart`.
 The repository ships an nFPM configuration and a local package wrapper:
 
 ```sh
-scripts/package-linux.sh
+FUSE_PROMISE_FUSE_BACKEND=fuse3 scripts/package-linux.sh
+FUSE_PROMISE_FUSE_BACKEND=fuse DIST_DIR=dist/fuse scripts/package-linux.sh
 ```
 
 The wrapper stages a release build with:
 
 ```sh
-DESTDIR=<stage> PREFIX=/usr BUILD_PROFILE=release SONAME_MAJOR=1 DAEMON_FEATURES=fuse-mount scripts/install-dev.sh
+DESTDIR=<stage> PREFIX=/usr BUILD_PROFILE=release SONAME_MAJOR=1 DAEMON_FEATURES=<backend-feature> scripts/install-dev.sh
 ```
 
 It then writes these artifacts to `dist/`:
 
 ```text
-fuse-promise_<version>-1_<arch>.deb
-fuse-promise-<version>-1.<arch>.rpm
+fuse-promise-fuse3_<version>-1_<arch>.deb
+fuse-promise-fuse3-<version>-1.<arch>.rpm
+fuse-promise-fuse_<version>-1_<arch>.deb
+fuse-promise-fuse-<version>-1.<arch>.rpm
 SHA256SUMS
 ```
 
@@ -105,13 +112,20 @@ systemd user service.
 Release builds produce native Linux packages for the main CPU architectures:
 
 ```text
-fuse-promise_<version>-1_amd64.deb
-fuse-promise_<version>-1_arm64.deb
-fuse-promise-<version>-1.x86_64.rpm
-fuse-promise-<version>-1.aarch64.rpm
+fuse-promise-fuse3_<version>-1_amd64.deb
+fuse-promise-fuse3_<version>-1_arm64.deb
+fuse-promise-fuse3-<version>-1.x86_64.rpm
+fuse-promise-fuse3-<version>-1.aarch64.rpm
+fuse-promise-fuse_<version>-1_amd64.deb
+fuse-promise-fuse_<version>-1_arm64.deb
+fuse-promise-fuse-<version>-1.x86_64.rpm
+fuse-promise-fuse-<version>-1.aarch64.rpm
 fuse-promise-<version>.tar.gz
 SHA256SUMS
 ```
+
+The FUSE2 and FUSE3 packages install the same executable, library, header, and
+service paths. They are separate package names and conflict with each other.
 
 Architecture names differ by package family: Debian uses `amd64` and `arm64`,
 while RPM uses `x86_64` and `aarch64`.
@@ -130,10 +144,10 @@ template:
   GitHub-hosted Ubuntu runners.
 - `FUSE Stable Gates` runs `tests/stable-release-gates.sh` on a self-hosted
   runner labeled `linux` and `fuse`, because mounted FUSE tests require
-  `/dev/fuse` and `fusermount3`.
-- `Release` validates the tag, builds DEB/RPM artifacts for `amd64` and
-  `arm64`, builds a source tarball, uploads them to the GitHub Release, and
-  optionally publishes packages to Cloudsmith.
+  `/dev/fuse` and a matching `fusermount` helper.
+- `Release` validates the tag, builds FUSE2 and FUSE3 DEB/RPM artifacts for
+  `amd64` and `arm64`, builds a source tarball, uploads them to the GitHub
+  Release, and optionally publishes packages to Cloudsmith.
 - Cloudsmith repository publishing is gated on the mounted FUSE tests passing.
   If a GitHub-hosted runner lacks `/dev/fuse`, the workflow can still build
   GitHub Release assets, but public apt/yum repository publishing requires a
@@ -194,7 +208,8 @@ tests/install-metadata.sh
 ```
 
 For FUSE-enabled packages, also run the mounted smoke gate in an environment
-with libfuse3 development metadata, `/dev/fuse`, and `fusermount3`:
+with the selected libfuse development metadata, `/dev/fuse`, and the matching
+`fusermount` helper:
 
 ```sh
 tests/read-only-mvp-smoke.sh

@@ -6,6 +6,23 @@ repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 cc_bin=${CC:-cc}
 pkg_config_bin=${PKG_CONFIG:-pkg-config}
 
+case "${FUSE_PROMISE_FUSE_BACKEND:-fuse3}" in
+    fuse | fuse2)
+        daemon_features=fuse-mount-fuse
+        fusermount_bin=${FUSERMOUNT:-fusermount}
+        pkg_config_module=fuse
+        ;;
+    fuse3)
+        daemon_features=fuse-mount-fuse3
+        fusermount_bin=${FUSERMOUNT3:-fusermount3}
+        pkg_config_module=fuse3
+        ;;
+    *)
+        echo "error: FUSE_PROMISE_FUSE_BACKEND must be fuse, fuse2, or fuse3" >&2
+        exit 1
+        ;;
+esac
+
 skip() {
     echo "skip: $*" >&2
     exit 77
@@ -27,10 +44,11 @@ fail() {
 command -v cargo >/dev/null || skip "cargo is required"
 command -v "$cc_bin" >/dev/null || skip "cc is required"
 command -v mountpoint >/dev/null || skip "mountpoint is required"
-command -v fusermount3 >/dev/null || skip "fusermount3 is required"
+command -v "$fusermount_bin" >/dev/null || skip "$fusermount_bin is required"
 command -v "$pkg_config_bin" >/dev/null || skip "pkg-config is required"
 [ -e /dev/fuse ] || skip "/dev/fuse is required"
-"$pkg_config_bin" --exists fuse3 || skip "fuse3 pkg-config metadata is required"
+"$pkg_config_bin" --exists "$pkg_config_module" \
+    || skip "$pkg_config_module pkg-config metadata is required"
 
 work_dir=$(mktemp -d)
 runtime_dir="$work_dir/runtime"
@@ -56,7 +74,7 @@ cleanup() {
         wait "$daemon_pid" 2>/dev/null
     fi
     if [ -d "$mount_path" ] && mountpoint -q "$mount_path"; then
-        fusermount3 -u "$mount_path" 2>/dev/null
+        "$fusermount_bin" -u "$mount_path" 2>/dev/null
     fi
     rm -rf "$work_dir"
 }
@@ -69,7 +87,7 @@ printf 'hello from fuse-promise example\n' > "$expected_file"
 cd "$repo_dir"
 cargo build -p fuse-promise-ffi --locked
 cargo build -p fpctl --locked
-cargo build -p fuse-promise-daemon --features fuse-mount --locked
+cargo build -p fuse-promise-daemon --features "$daemon_features" --locked
 
 ln -s "$repo_dir/target/debug/libfusepromise.so" \
     "$provider_lib_dir/libfusepromise.so"

@@ -1,4 +1,4 @@
-name: fuse-promise
+name: ${FUSE_PROMISE_PACKAGE_NAME}
 arch: ${FUSE_PROMISE_ARCH}
 platform: linux
 version: ${FUSE_PROMISE_VERSION}
@@ -7,9 +7,13 @@ version_schema: semver
 section: utils
 priority: optional
 maintainer: fuse-promise contributors
-description: Linux user-space Promise filesystem runtime built on FUSE.
+description: ${FUSE_PROMISE_PACKAGE_DESCRIPTION}
 homepage: https://github.com/fuse-promise/fuse-promise
 umask: 0o022
+provides:
+  - fuse-promise
+conflicts:
+  - ${FUSE_PROMISE_PACKAGE_CONFLICTS}
 
 contents:
   - src: ${FUSE_PROMISE_STAGE}/usr/include/fuse-promise/fuse-promise.h
@@ -61,9 +65,9 @@ contents:
 overrides:
   deb:
     depends:
-      - fuse3
-      - libfuse3-3
+      - ${FUSE_PROMISE_DEB_FUSE_DEP}
+      - ${FUSE_PROMISE_DEB_LIBFUSE_DEP}
   rpm:
     depends:
-      - fuse3
-      - fuse3-libs
+      - ${FUSE_PROMISE_RPM_FUSE_DEP}
+      - ${FUSE_PROMISE_RPM_LIBFUSE_DEP}

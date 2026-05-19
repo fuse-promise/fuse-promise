@@ -74,10 +74,10 @@ jobs:
           if command -v apt-get >/dev/null 2>&1; then
             if command -v sudo >/dev/null 2>&1; then
               sudo apt-get update
-              sudo apt-get install -y build-essential pkg-config libfuse3-dev fuse3
+              sudo apt-get install -y build-essential pkg-config libfuse-dev libfuse3-dev fuse3
             elif [ "$(id -u)" -eq 0 ]; then
               apt-get update
-              apt-get install -y build-essential pkg-config libfuse3-dev fuse3
+              apt-get install -y build-essential pkg-config libfuse-dev libfuse3-dev fuse3
             else
               echo "::notice::apt-get is available but sudo is not; assuming runner dependencies are preinstalled."
             fi
@@ -103,6 +103,8 @@ jobs:
         run: |
           cargo fmt --check --all
           cargo check --workspace --locked
+          cargo check -p fuse-promise-daemon --features fuse-mount-fuse --locked
+          cargo check -p fuse-promise-daemon --features fuse-mount-fuse3 --locked
           cargo test --workspace --locked
           BUILD_PROFILE=release SONAME_MAJOR=1 tests/abi-hardening.sh
           BUILD_PROFILE=release SONAME_MAJOR=1 tests/install-metadata.sh
@@ -126,7 +128,7 @@ jobs:
           fi
 
   package:
-    name: Package ${{ matrix.package_arch }}
+    name: Package ${{ matrix.package_arch }} ${{ matrix.fuse_backend }}
     needs: validate
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -136,9 +138,19 @@ jobs:
           - package_arch: amd64
             rpm_arch: x86_64
             runner: ubuntu-22.04
+            fuse_backend: fuse
+          - package_arch: amd64
+            rpm_arch: x86_64
+            runner: ubuntu-22.04
+            fuse_backend: fuse3
           - package_arch: arm64
             rpm_arch: aarch64
             runner: ubuntu-22.04-arm
+            fuse_backend: fuse
+          - package_arch: arm64
+            rpm_arch: aarch64
+            runner: ubuntu-22.04-arm
+            fuse_backend: fuse3
 
     steps:
       - name: Checkout tag
@@ -150,7 +162,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libfuse3-dev fuse3 rpm
+          sudo apt-get install -y build-essential pkg-config libfuse-dev libfuse3-dev fuse3 rpm
 
       - name: Install Rust toolchain
         run: |
@@ -180,18 +192,19 @@ jobs:
 
       - name: Build DEB and RPM packages
         env:
+          FUSE_PROMISE_FUSE_BACKEND: ${{ matrix.fuse_backend }}
           FUSE_PROMISE_ARCH: ${{ matrix.package_arch }}
           FUSE_PROMISE_RPM_ARCH: ${{ matrix.rpm_arch }}
-          DIST_DIR: dist/${{ matrix.package_arch }}
+          DIST_DIR: dist
         run: bash scripts/package-linux.sh
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: fuse-promise-${{ env.RELEASE_TAG }}-${{ matrix.package_arch }}-packages
+          name: fuse-promise-${{ env.RELEASE_TAG }}-${{ matrix.fuse_backend }}-${{ matrix.package_arch }}-packages
           path: |
-            dist/${{ matrix.package_arch }}/*.deb
-            dist/${{ matrix.package_arch }}/*.rpm
+            dist/*.deb
+            dist/*.rpm
           if-no-files-found: error
 
   publish:

@@ -89,9 +89,9 @@ specification
 ## Dependency and Architecture Gate
 
 - [x] Direct implementation dependency set is documented and frozen for Phase 1.
-- [x] FUSE backend is fixed to `fuser` over libfuse3/fusermount3, behind the
-  daemon `fuse-mount` feature.
-- [x] Default workspace build remains independent of `pkg-config` and libfuse3
+- [x] FUSE backend is fixed to `fuser` with selectable libfuse2/libfuse3
+  daemon features; FUSE3 remains the default.
+- [x] Default workspace build remains independent of `pkg-config` and libfuse
   development metadata.
 - [x] No async runtime, cache library, database, HTTP, cloud SDK, desktop
   integration, or generated-header dependency is planned for the read-only MVP.

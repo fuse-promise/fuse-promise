@@ -13,9 +13,9 @@ application-specific integrations.
 - Implementation language: Rust.
 - Public ABI: stable C ABI in `include/fuse-promise/fuse-promise.h`.
 - Minimum Rust version: 1.85.
-- FUSE backend: `fuser` with libfuse3 mount support.
-- FUSE system dependency: Linux FUSE kernel interface plus `fusermount3` /
-  libfuse3 runtime tooling.
+- FUSE backend: `fuser` with selectable libfuse2 or libfuse3 mount support.
+- FUSE system dependency: Linux FUSE kernel interface plus the selected
+  libfuse runtime tooling.
 - Daemon model: `fuse-promised` owns the authoritative runtime.
 - IPC model: private Unix domain socket under `XDG_RUNTIME_DIR`.
 - IPC encoding: length-prefixed `bincode` messages.
@@ -64,16 +64,17 @@ Dependencies should be added to individual crates only when the implementation
 uses them. The workspace manifest fixes allowed versions; it is not a reason
 to import every dependency everywhere.
 
-The daemon exposes FUSE mounting behind its `fuse-mount` feature. This keeps
+The daemon exposes FUSE mounting behind backend-specific features. This keeps
 the default workspace build green on machines that have only the FUSE runtime
-tools installed. Enabling the feature requires `pkg-config` and libfuse3
-development metadata so `fuser` can link the libfuse3 mount implementation.
+tools installed. Enabling a backend feature requires `pkg-config` and matching
+libfuse development metadata so `fuser` can link the selected mount
+implementation.
 
 ## Dependency Table
 
 | Area | Decision | Version | First Used | Notes |
 |---|---|---:|---|---|
-| FUSE adapter | `fuser` | `0.17.0` | Phase 1 | Use `default-features = false`, `libfuse3`, and `abi-7-31`. This targets libfuse3/fusermount3 while keeping Promise semantics in our runtime. |
+| FUSE adapter | `fuser` | `0.17.0` | Phase 1 | Use `default-features = false`, backend-specific `libfuse2` or `libfuse3`, and `abi-7-31`. Promise semantics stay in our runtime. |
 | IPC encoding | `bincode` | `2.0.1` | Phase 1 | Use only for private IPC. Public consumers must never depend on the wire format. |
 | Unix/POSIX checks | `rustix` | `1.1` | Phase 1 | Use for peer credentials, runtime directory validation, timestamp application, and safer Unix filesystem/process operations. |
 | CLI | `clap` | `4.5` | Phase 1 | Approved for `fpctl` and `fuse-promised` once the CLI expands beyond the current tiny command set. |
@@ -102,7 +103,7 @@ Rules:
 
 - Keep the default workspace build independent of system FUSE development
   packages. `cargo check --workspace --locked` and `cargo test --workspace
-  --locked` must work without `pkg-config` or libfuse3 headers.
+  --locked` must work without `pkg-config` or libfuse headers.
 - Keep `fuser` isolated to `fuse-promise-daemon` behind the `fuse-mount`
   feature. Runtime, IPC, FFI, and `fpctl` must not import FUSE crate types.
 - Use `bincode` only for private IPC. It is not an ABI, file format, or public
@@ -123,12 +124,14 @@ System dependency matrix:
 | Scope | Required Outside Cargo | Notes |
 |---|---|---|
 | Default build and tests | Rust 1.85+ toolchain | No system FUSE development package should be required. |
-| FUSE feature build | `pkg-config`, libfuse3 development metadata | Required by `fuser` with the `libfuse3` feature. |
-| FUSE runtime smoke | Linux FUSE kernel support, `/dev/fuse`, `fusermount3`, `fuse3` runtime tools | Needed to verify a real user-session mount. |
+| FUSE3 feature build | `pkg-config`, libfuse3 development metadata | Required by `fuser` with the `libfuse3` feature. |
+| FUSE2 feature build | `pkg-config`, libfuse2 development metadata | Required by `fuser` with the `libfuse2` feature. |
+| FUSE runtime smoke | Linux FUSE kernel support, `/dev/fuse`, matching `fusermount` helper and runtime tools | Needed to verify a real user-session mount. |
 | Installed developer ABI | C compiler, C++ compiler, `pkg-config` | Used for header parsing, examples, and generated `fuse-promise.pc`. |
 
-The project targets the libfuse3/fusermount3 stack. Legacy libfuse2 is not a
-first implementation target.
+The project defaults to the libfuse3/fusermount3 stack and can build a
+separate libfuse2 package for distributions where FUSE3 is not readily
+available.
 
 ## Implementation Order Lock
 
@@ -162,25 +165,31 @@ Use `fuser` as the Rust FUSE adapter crate.
 Configuration:
 
 ```toml
-fuser = { version = "0.17.0", default-features = false, features = ["abi-7-31", "libfuse3"] }
+fuser = { version = "0.17.0", default-features = false, features = ["abi-7-31"] }
 ```
 
 Daemon feature gate:
 
 ```toml
-fuse-mount = ["dep:fuser"]
+fuse-mount = ["fuse-mount-fuse3"]
+fuse-mount-fuse = ["fuse-mount-fuse2"]
+fuse-mount-fuse2 = ["dep:fuser", "fuser/libfuse2"]
+fuse-mount-fuse3 = ["dep:fuser", "fuser/libfuse3"]
 ```
 
 System packages expected for development and runtime:
 
 ```text
-fuse3
-libfuse3-dev
 pkg-config
+libfuse-dev      for FUSE2 builds
+libfuse3-dev     for FUSE3 builds
+fuse             for FUSE2 runtime packages
+fuse3            for FUSE3 runtime packages
 ```
 
-The project is therefore targeting the modern libfuse3/fusermount3 stack, not
-the legacy libfuse2 stack.
+The release packaging script selects a backend with
+`FUSE_PROMISE_FUSE_BACKEND=fuse` or `FUSE_PROMISE_FUSE_BACKEND=fuse3`. The two
+packages install the same runtime paths and conflict with each other.
 
 The FUSE adapter must stay thin:
 
@@ -198,7 +207,7 @@ Promise semantics remain in the runtime and daemon.
 | Alternative | Reason |
 |---|---|
 | `fuse3` crate latest | `fuse3 0.9.0` requires Rust 1.91, which is too high for the project baseline. It also pushes the implementation toward async runtime choices before the read-only MVP needs them. |
-| Legacy libfuse2 default | The target Linux stack should be libfuse3/fusermount3. libfuse2 compatibility is not a first implementation goal. |
+| Legacy libfuse2 default | FUSE3 remains the default because it is the modern libfuse stack. FUSE2 is built as a separate compatibility package. |
 | Direct low-level `/dev/fuse` protocol implementation | Too much protocol surface for the MVP. We can revisit only if FUSE crate behavior blocks required semantics. |
 | Kernel module | Out of scope. `fuse-promise` is user-space only. |
 

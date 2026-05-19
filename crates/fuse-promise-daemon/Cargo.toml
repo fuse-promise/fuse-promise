@@ -17,4 +17,8 @@ fuser = { workspace = true, optional = true }
 
 [features]
 default = []
-fuse-mount = ["dep:fuser"]
+fuse-mount = ["fuse-mount-fuse3"]
+fuse-mount-backend = ["dep:fuser"]
+fuse-mount-fuse = ["fuse-mount-fuse2"]
+fuse-mount-fuse2 = ["fuse-mount-backend", "fuser/libfuse2"]
+fuse-mount-fuse3 = ["fuse-mount-backend", "fuser/libfuse3"]

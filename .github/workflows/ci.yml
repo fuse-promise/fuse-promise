@@ -29,7 +29,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libfuse3-dev fuse3
+          sudo apt-get install -y build-essential pkg-config libfuse-dev libfuse3-dev fuse3
 
       - name: Install Rust toolchain
         run: |
@@ -52,6 +52,11 @@ jobs:
 
       - name: Check workspace
         run: cargo check --workspace --locked
+
+      - name: Check FUSE daemon backends
+        run: |
+          cargo check -p fuse-promise-daemon --features fuse-mount-fuse --locked
+          cargo check -p fuse-promise-daemon --features fuse-mount-fuse3 --locked
 
       - name: Test workspace
         run: cargo test --workspace --locked
