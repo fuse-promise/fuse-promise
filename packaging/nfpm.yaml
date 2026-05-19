@@ -7,6 +7,7 @@ version_schema: semver
 section: utils
 priority: optional
 maintainer: fuse-promise contributors
+license: Apache-2.0
 description: ${FUSE_PROMISE_PACKAGE_DESCRIPTION}
 homepage: https://github.com/fuse-promise/fuse-promise
 umask: 0o022
@@ -16,6 +17,18 @@ conflicts:
   - ${FUSE_PROMISE_PACKAGE_CONFLICTS}
 
 contents:
+  - src: debian/copyright
+    dst: /usr/share/doc/${FUSE_PROMISE_PACKAGE_NAME}/copyright
+    expand: true
+    file_info:
+      mode: 0644
+
+  - src: LICENSE
+    dst: /usr/share/licenses/${FUSE_PROMISE_PACKAGE_NAME}/LICENSE
+    expand: true
+    file_info:
+      mode: 0644
+
   - src: ${FUSE_PROMISE_STAGE}/usr/include/fuse-promise/fuse-promise.h
     dst: /usr/include/fuse-promise/fuse-promise.h
     expand: true
