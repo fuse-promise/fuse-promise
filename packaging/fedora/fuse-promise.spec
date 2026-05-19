@@ -1,5 +1,5 @@
 Name:           fuse-promise
-Version:        1.0.3
+Version:        1.0.4
 Release:        1%{?dist}
 Summary:        Promise filesystem runtime built on FUSE 3
 
@@ -67,5 +67,8 @@ cargo test --workspace --locked
 %{_libdir}/pkgconfig/fuse-promise.pc
 
 %changelog
+* Tue May 19 2026 fuse-promise contributors <maintainers@fuse-promise.invalid> - 1.0.4-1
+- Include license metadata and license files in generated release packages.
+
 * Tue May 19 2026 fuse-promise contributors <maintainers@fuse-promise.invalid> - 1.0.3-1
 - Initial Fedora package.

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.4 - 2026-05-19
+
+Release packaging metadata update:
+
+- Add `Apache-2.0` license metadata to release DEB/RPM packages.
+- Include Debian copyright metadata in generated binary packages.
+- Include the Apache License text in generated binary packages.
+- Keep both package variants:
+  `fuse-promise` for FUSE2 and `fuse3-promise` for FUSE3.
+- Keep the public C ABI and `libfusepromise.so.1` soname-major compatible.
+
 ## 1.0.3 - 2026-05-19
 
 Ubuntu 18.04 compatibility packaging update:
