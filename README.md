@@ -1,6 +1,6 @@
 # fuse-promise
 
-Linux user-space Promise filesystem runtime built on FUSE3.
+Linux user-space Promise filesystem runtime built on FUSE.
 
 `fuse-promise` lets a provider publish a filesystem tree before file contents
 exist locally. Metadata is visible immediately through ordinary paths. File
@@ -120,7 +120,7 @@ Run it locally:
 
 ```sh
 prefix="$PWD/.local"
-PREFIX="$prefix" DAEMON_FEATURES=fuse-mount scripts/install-dev.sh
+PREFIX="$prefix" DAEMON_FEATURES=fuse-mount-fuse3 scripts/install-dev.sh
 export PKG_CONFIG_PATH="$prefix/lib/pkgconfig"
 
 cc -std=c11 -Wall -Wextra -Werror examples/minimal_provider.c \
@@ -172,16 +172,18 @@ cargo build --workspace --locked
 cargo test --workspace --locked
 ```
 
-FUSE-enabled daemon build:
+FUSE-enabled daemon builds:
 
 ```sh
-cargo build -p fuse-promise-daemon --features fuse-mount --locked
+cargo build -p fuse-promise-daemon --features fuse-mount-fuse3 --locked
+cargo build -p fuse-promise-daemon --features fuse-mount-fuse --locked
 ```
 
-Minimal mounted smoke test:
+Minimal mounted smoke tests:
 
 ```sh
-tests/minimal-provider-smoke.sh
+FUSE_PROMISE_FUSE_BACKEND=fuse3 tests/minimal-provider-smoke.sh
+FUSE_PROMISE_FUSE_BACKEND=fuse tests/minimal-provider-smoke.sh
 ```
 
 Required system packages on Debian/Ubuntu:
@@ -196,21 +198,23 @@ Release gate:
 BUILD_PROFILE=release SONAME_MAJOR=1 tests/stable-release-gates.sh
 ```
 
-The full gate currently runs the FUSE3 mounted smoke suite and requires
-`/dev/fuse`, `fusermount3`, and libfuse3 development metadata.
+The full gate currently runs the FUSE3 stable mounted suite. The minimal smoke
+test supports both FUSE2 and FUSE3 through `FUSE_PROMISE_FUSE_BACKEND`.
 
 ## Install and Package
 
 Developer install into `/usr/local`:
 
 ```sh
-scripts/install-dev.sh
+DAEMON_FEATURES=fuse-mount-fuse3 scripts/install-dev.sh
+DAEMON_FEATURES=fuse-mount-fuse scripts/install-dev.sh
 ```
 
 Distribution-style staging:
 
 ```sh
-DESTDIR="$pkgdir" PREFIX=/usr BUILD_PROFILE=release SONAME_MAJOR=1 DAEMON_FEATURES=fuse-mount scripts/install-dev.sh
+DESTDIR="$pkgdir" PREFIX=/usr BUILD_PROFILE=release SONAME_MAJOR=1 DAEMON_FEATURES=fuse-mount-fuse3 scripts/install-dev.sh
+DESTDIR="$pkgdir" PREFIX=/usr BUILD_PROFILE=release SONAME_MAJOR=1 DAEMON_FEATURES=fuse-mount-fuse scripts/install-dev.sh
 ```
 
 Release packaging uses nFPM:
