@@ -1,0 +1,3 @@
+usr/bin/fpctl
+usr/bin/fuse-promised
+usr/lib/systemd/user/fuse-promised.service

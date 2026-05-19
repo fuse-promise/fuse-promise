@@ -1,0 +1,57 @@
+Source: fuse-promise
+Section: utils
+Priority: optional
+Maintainer: fuse-promise contributors <maintainers@fuse-promise.invalid>
+Build-Depends:
+ debhelper-compat (= 13),
+ cargo,
+ rustc,
+ pkgconf | pkg-config,
+ libfuse3-dev
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/fuse-promise/fuse-promise
+Vcs-Git: https://github.com/fuse-promise/fuse-promise.git
+Vcs-Browser: https://github.com/fuse-promise/fuse-promise
+
+Package: libfusepromise1
+Section: libs
+Architecture: any
+Multi-Arch: same
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends}
+Description: Promise filesystem public C ABI runtime library
+ libfusepromise provides the stable public C ABI used by applications and
+ providers that integrate with the fuse-promise user-session filesystem
+ runtime.
+
+Package: libfusepromise-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends:
+ libfusepromise1 (= ${binary:Version}),
+ pkgconf | pkg-config,
+ ${misc:Depends}
+Description: Development files for libfusepromise
+ This package contains the public C header, unversioned shared library symlink,
+ and pkg-config metadata needed to build applications against libfusepromise.
+
+Package: fuse3-promise
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ libfusepromise1 (= ${binary:Version}),
+ fuse3
+Provides:
+ fuse-promise
+Conflicts:
+ fuse-promise
+Replaces:
+ fuse-promise
+Description: Promise filesystem runtime built on FUSE 3
+ fuse-promise provides a user-session FUSE daemon and an administrative CLI for
+ mounting Promise filesystem providers through FUSE 3. The public C ABI is
+ shipped by the libfusepromise runtime and development packages.

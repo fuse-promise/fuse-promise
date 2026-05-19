@@ -1,0 +1,27 @@
+#!/usr/bin/make -f
+
+include /usr/share/dpkg/default.mk
+
+export DH_VERBOSE = 1
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	FUSE_PROMISE_SONAME_MAJOR=1 cargo build -p fuse-promise-ffi --locked --release
+	cargo build -p fpctl --locked --release
+	cargo build -p fuse-promise-daemon --features fuse-mount-fuse3 --locked --release
+
+override_dh_auto_test:
+	cargo test --workspace --locked
+
+override_dh_auto_install:
+	DESTDIR=$(CURDIR)/debian/tmp \
+		PREFIX=/usr \
+		LIBDIR=/usr/lib/$(DEB_HOST_MULTIARCH) \
+		PKGCONFIGDIR=/usr/lib/$(DEB_HOST_MULTIARCH)/pkgconfig \
+		SYSTEMD_USER_DIR=/usr/lib/systemd/user \
+		BUILD_PROFILE=release \
+		SONAME_MAJOR=1 \
+		DAEMON_FEATURES=fuse-mount-fuse3 \
+		scripts/install-dev.sh
