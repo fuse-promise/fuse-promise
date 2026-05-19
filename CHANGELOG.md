@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.2 - 2026-05-19
+
+FUSE backend packaging update:
+
+- Add selectable FUSE2 and FUSE3 daemon build features.
+- Add FUSE2 and FUSE3 package variants:
+  `fuse-promise` for FUSE2 and `fuse3-promise` for FUSE3.
+- Keep installed binary names stable: `fuse-promised` and `fpctl`.
+- Keep the public C ABI and `libfusepromise.so.1` soname-major compatible.
+- Document the minimal provider example, including directory/file attributes,
+  provider-backed reads, and materialize.
+- Update README references to the `IDataObject` / `IStream` and macOS file
+  promise model.
+
 ## 1.0.1 - 2026-05-18
 
 Packaging and release automation update:
